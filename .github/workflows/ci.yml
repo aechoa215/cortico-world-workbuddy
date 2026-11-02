@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (${{ matrix.os }} / node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 没有 lockfile：本包零运行时依赖，devDependencies 只有 esbuild。
+      - name: Install devDependencies
+        run: npm install --no-audit --no-fund
+
+      # 1) 语法体检：所有 ESM 源码与脚本都要能过 node --check
+      - name: Syntax check
+        shell: bash
+        run: |
+          set -e
+          for f in src/*.js src/webui/*.js scripts/*.mjs; do
+            node --check "$f"
+          done
+
+      # 2) dist 必须与源码同步：改客户端却没重建时这一步会红
+      - name: Build webui and verify dist is up to date
+        shell: bash
+        run: |
+          set -e
+          npm run build:web
+          git diff --exit-code -- dist/ || {
+            echo "::error::dist/webui.js 与 src/webui/client.js 不同步，请在本地跑 npm run build:web 后提交"
+            exit 1
+          }
+
+      # 3) 世界契约自检：dry-mount 需要宿主框架，这里允许缺失（CI 没有 Coopanion）
+      - name: Extension selfcheck
+        run: node scripts/selfcheck.mjs --allow-missing-host
+
+  visual:
+    # 端到端 UI 验证需要本机 Coopanion，只在 Windows runner 上尽力而为
+    name: visual (windows, best effort)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: verify-ui (requires Coopanion + Chrome, expected to skip on CI)
+        run: node scripts/verify-ui.mjs --runs 1

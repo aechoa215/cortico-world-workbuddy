@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/*.map
+
+# 本地运行期文件（凭据缓存、目录缓存、注入备份）
+workbuddy-catalog.json
+index.html.workbuddy-backup
+.env
+*.log
+
+# 测试产物：截图与报告不进仓库，只在本地跑
+scripts/visual/
+
+# 打包产物走 GitHub Release 附件，不进历史
+*.tgz
+
+# 系统垃圾
+.DS_Store
+Thumbs.db

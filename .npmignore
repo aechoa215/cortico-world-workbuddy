@@ -1,0 +1,6 @@
+# 打包时的排除项（`files` 白名单之外再排除）
+scripts/visual/
+*.log
+.env
+*.local
+workbuddy-catalog.json

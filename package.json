@@ -1,0 +1,82 @@
+{
+  "name": "cortico-world-workbuddy",
+  "version": "0.1.5",
+  "type": "module",
+  "description": "把 Windows 端已登录的 WorkBuddy 客户端模型桥接进 Coopanion：读取本机登录态，列出模型目录与默认积分倍率，供 Coo 调用。",
+  "license": "MIT",
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "workbuddy",
+    "desktop-pet"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./src/index.js",
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "WorkBuddy 桥接",
+    "icon": "assets/icon.svg",
+    "describe": "describe.json",
+    "webUiClient": "dist/webui.js",
+    "webUiStyle": "dist/webui.css",
+    "tags": [
+      "unofficial-api",
+      "external-setup",
+      "sensitive-data"
+    ],
+    "os": [
+      "win32"
+    ],
+    "locales": {
+      "zh": {
+        "displayName": "WorkBuddy 桥接",
+        "description": "把本机已登录的 WorkBuddy 客户端（国内版 / 国际版）模型接入 Coopanion，面板中可选模型并显示其默认积分倍率。"
+      },
+      "en": {
+        "displayName": "WorkBuddy Bridge",
+        "description": "Bridge locally signed-in WorkBuddy desktop models into Coopanion, with a model picker showing each model's default credit multiplier."
+      }
+    }
+  },
+  "files": [
+    "src",
+    "dist",
+    "assets",
+    "README.md",
+    "CHANGELOG.md",
+    "describe.json",
+    "scripts",
+    "LICENSE",
+    "SECURITY.md",
+    "ENV_PROMPT.md"
+  ],
+  "scripts": {
+    "build:web": "esbuild src/webui/client.js --bundle --format=esm --outfile=dist/webui.js",
+    "selfcheck": "node scripts/selfcheck.mjs",
+    "host-inject": "node scripts/host-inject.mjs",
+    "verify": "node scripts/verify-ui.mjs --runs 3",
+    "prepack": "npm run build:web"
+  },
+  "author": {
+    "name": "大肥鱼 (aechoa215)",
+    "email": "yawenpeng0831@gmail.com",
+    "url": "https://github.com/aechoa215"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aechoa215/cortico-world-workbuddy.git"
+  },
+  "homepage": "https://github.com/aechoa215/cortico-world-workbuddy#readme",
+  "bugs": {
+    "url": "https://github.com/aechoa215/cortico-world-workbuddy/issues"
+  },
+  "os": [
+    "win32"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  }
+}

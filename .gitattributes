@@ -1,0 +1,10 @@
+# 统一换行符，避免 Windows 提交与 Linux CI 之间出现「整个文件都变了」的假 diff
+* text=auto eol=lf
+
+# PowerShell 脚本给 Windows 用，保留 CRLF（含 UTF-8 BOM 的编码由编辑器设置保证）
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源不做换行转换
+*.png binary
+*.tgz binary
