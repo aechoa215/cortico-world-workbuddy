@@ -341,6 +341,21 @@ for (let run = 1; run <= RUNS; run += 1) {
       return dom === false && api.prefer === false ? true : false;
     });
     row.checks.panelToggleOff = true;
+    // --- 用量面板：页签 → 渲染 → 概览表有行 ---
+    await evaluate(clickByText('用量'));
+    const usage = await waitFor('用量面板渲染', async () => {
+      const v = await evaluate(`(() => {
+        const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '刷新余额' && b.offsetParent !== null);
+        const chip = [...document.querySelectorAll('*')].find((n) => n.children.length === 0 && (n.textContent || '').startsWith('今日积分'));
+        const rows = document.querySelectorAll('table tr').length;
+        return { hasRefresh: !!btn, chip: (chip?.textContent || '').trim(), rows };
+      })()`);
+      return v.hasRefresh && v.rows >= 4 ? v : false;
+    });
+    row.checks.usageRendered = usage.hasRefresh === true;
+    row.checks.usageRows = usage.rows;
+    row.checks.usageChip = usage.chip;
+    if (SHOTS && run === 1) { await sleep(300); await shot('world-usage'); }
     if (KEEP) await shot(`run${run}-world`);
     void pane;
   } catch (err) {

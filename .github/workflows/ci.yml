@@ -28,9 +28,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # 没有 lockfile：零运行时依赖，devDependencies 只有 esbuild。
+      # 有 package-lock.json：devDependencies 只有 esbuild，用 npm ci 保证可复现。
       - name: Install devDependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Syntax check
         shell: bash
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
 
       - name: verify-ui (skipped unless Coopanion is installed)
         shell: pwsh

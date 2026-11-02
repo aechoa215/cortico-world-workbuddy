@@ -3,6 +3,8 @@
 This machine has a WorkBuddy desktop sign-in bridged in (region: {{workbuddy.region}}; signed in: {{workbuddy.authed}}).
 The model catalog holds {{workbuddy.catalogSize}} models. The currently selected model is `{{workbuddy.model}}` with default credit multiplier {{workbuddy.multiplier}}.
 WorkBuddy desktop main process: {{workbuddy.process}}. Relay-first switch: {{workbuddy.priority}}.
+Spent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.todayTokens}} tokens (locally recorded).
+The multiplier above already includes any time-limited discount or free window that is active right now; `wb_list_models` also marks which offers are active and their hours.
 
 - Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.
 - Use `wb_select_model` when the user asks to switch the WorkBuddy model.

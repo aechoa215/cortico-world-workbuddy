@@ -55,6 +55,36 @@ const TEXT = {
     repairing: '正在重新注入…',
     repaired: '已修复，重新打开控制台即可看到按钮',
     repairFail: '修复失败',
+    usageTitle: '用量',
+    usageDesc:
+      '本机记账的调用用量与 WorkBuddy 积分包余额。积分取上游每次调用回传的真实扣费（可能为 0），倍率按目录 + 限时优惠实时计算。',
+    usageRefresh: '刷新余额',
+    usageClear: '清空本地账本',
+    usageCleared: '本地账本已清空',
+    metricCalls: '调用',
+    metricCredit: '积分',
+    metricInput: '输入 tok',
+    metricOutput: '输出 tok',
+    spanToday: '今天',
+    spanWeek: '近 7 天',
+    spanMonth: '近 30 天',
+    byModel: '按模型',
+    balanceTitle: '积分包余额',
+    colPkgName: '积分包',
+    colPkgRemain: '剩余',
+    colPkgUsed: '已用',
+    colPkgCycle: '周期',
+    promosTitle: '限时优惠 / 免费',
+    promoActive: '生效中',
+    promoSoon: '未生效',
+    recentTitle: '最近调用',
+    colTime: '时间',
+    colTokens: 'token',
+    colDuration: '耗时',
+    noData: '暂无数据',
+    totalCredit: '合计积分',
+    todayCredit: '今日积分',
+    todayTokens: '今日 token',
   },
   en: {
     refresh: 'Refresh from WorkBuddy',
@@ -106,6 +136,36 @@ const TEXT = {
     repairing: 'Re-injecting…',
     repaired: 'Fixed. Reopen the console to see the button',
     repairFail: 'Repair failed',
+    usageTitle: 'Usage',
+    usageDesc:
+      'Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.',
+    usageRefresh: 'Refresh balance',
+    usageClear: 'Clear local ledger',
+    usageCleared: 'Local ledger cleared',
+    metricCalls: 'Calls',
+    metricCredit: 'Credits',
+    metricInput: 'Input tok',
+    metricOutput: 'Output tok',
+    spanToday: 'Today',
+    spanWeek: 'Last 7 days',
+    spanMonth: 'Last 30 days',
+    byModel: 'By model',
+    balanceTitle: 'Credit packages',
+    colPkgName: 'Package',
+    colPkgRemain: 'Remaining',
+    colPkgUsed: 'Used',
+    colPkgCycle: 'Cycle',
+    promosTitle: 'Limited-time offers / free',
+    promoActive: 'active',
+    promoSoon: 'scheduled',
+    recentTitle: 'Recent calls',
+    colTime: 'Time',
+    colTokens: 'tokens',
+    colDuration: 'Latency',
+    noData: 'No data',
+    totalCredit: 'Total credits',
+    todayCredit: 'Credits today',
+    todayTokens: 'Tokens today',
   },
 };
 
@@ -114,9 +174,20 @@ function strings(ctx) {
 }
 
 function fmtMultiplier(m, s) {
-  if (typeof m.creditMultiplier !== 'number') return { text: '—', free: false };
-  if (m.creditMultiplier === 0) return { text: `x0 · ${s.multiplierFree}`, free: true };
-  return { text: `x${m.creditMultiplier}`, free: false };
+  const price = m?.price;
+  const base =
+    typeof price?.base === 'number' ? price.base : typeof m?.creditMultiplier === 'number' ? m.creditMultiplier : null;
+  const eff = typeof price?.effective === 'number' ? price.effective : base;
+  if (base === null) return { text: '—', free: false, promo: '' };
+  if (eff === 0) return { text: `x0 · ${s.multiplierFree}${price?.windowText ? ` ${price.windowText}` : ''}`, free: true, promo: price?.badge ?? '' };
+  if (typeof eff === 'number' && eff < base) {
+    return {
+      text: `x${eff} ← x${base}${price?.windowText ? ` ${price.windowText}` : ''}`,
+      free: false,
+      promo: price?.badge ?? '',
+    };
+  }
+  return { text: `x${base}`, free: false, promo: price?.badge ?? '' };
 }
 
 function fmtTs(ms, s) {
@@ -176,6 +247,7 @@ function mountModels(ctx) {
       if (m.description) nameCell.title = m.description;
 
       const mulPill = ui.pill(mul.text, mul.free ? 'on' : 'plain');
+      if (mul.promo) mulPill.title = mul.promo;
 
       const btn = ui.button(isCurrent ? s.selected : s.select, {
         size: 'sm',
@@ -436,10 +508,192 @@ function mountPriority(ctx) {
   });
 }
 
+function fmtNum(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  return String(Math.round(n * 100) / 100);
+}
+
+function mountUsage(ctx) {
+  const s = strings(ctx);
+  const { ui } = ctx;
+
+  const sheet = ui.sheet({ title: `${s.usageTitle} · WorkBuddy`, desc: s.usageDesc });
+  ctx.root.append(sheet.el);
+
+  const bar = ui.rowbar();
+  const refreshBtn = ui.button(s.usageRefresh, { variant: 'primary', size: 'sm' });
+  const clearBtn = ui.button(s.usageClear, { variant: 'plain', size: 'sm' });
+  const todayChip = ui.chip('', 'accent');
+  const balanceChip = ui.chip('', 'plain');
+  bar.append(refreshBtn, clearBtn, todayChip, balanceChip);
+  sheet.body.append(bar);
+
+  const errLine = ui.msgline();
+  sheet.body.append(errLine);
+
+  // 区间概览：今天 / 近 7 天 / 近 30 天 / 全部（口径与 Coopanion「用量与成本」一致）。
+  const overview = ui.table({
+    head: ['', s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    maxHeight: '220px',
+  });
+  sheet.body.append(overview.el);
+
+  const modelSection = ui.section(s.byModel);
+  const modelTable = ui.table({
+    head: [s.colModel, s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    maxHeight: '260px',
+  });
+  modelSection.append(modelTable.el);
+  sheet.body.append(modelSection);
+
+  const pkgSection = ui.section(s.balanceTitle);
+  const pkgTable = ui.table({
+    head: [s.colPkgName, s.colPkgRemain, s.colPkgUsed, s.colPkgCycle],
+    maxHeight: '220px',
+  });
+  pkgSection.append(pkgTable.el);
+  sheet.body.append(pkgSection);
+
+  const promoSection = ui.section(s.promosTitle);
+  const promoWrap = ui.h('div');
+  promoSection.append(promoWrap);
+  sheet.body.append(promoSection);
+
+  const recentSection = ui.section(s.recentTitle);
+  const recentTable = ui.table({
+    head: [s.colTime, s.colModel, s.colTokens, s.metricCredit, s.colDuration],
+    maxHeight: '300px',
+  });
+  recentSection.append(recentTable.el);
+  sheet.body.append(recentSection);
+
+  let state = null;
+
+  function spanRow(label, bucket) {
+    const b = bucket ?? {};
+    return [label, String(b.calls ?? 0), fmtNum(b.credit), fmtNum(b.prompt), fmtNum(b.completion)];
+  }
+
+  function render() {
+    const totals = state?.summary?.totals ?? {};
+    todayChip.textContent = `${s.todayCredit}: ${fmtNum(totals.today?.credit)} · ${s.todayTokens}: ${fmtNum(
+      (totals.today?.prompt ?? 0) + (totals.today?.completion ?? 0),
+    )}`;
+    balanceChip.textContent = `${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`;
+
+    const spans = [spanRow(s.spanToday, totals.today), spanRow(s.spanWeek, totals.week), spanRow(s.spanMonth, totals.month)];
+    overview.clear();
+    for (const row of spans) overview.addRow(row);
+
+    const byModel = state?.summary?.byModel ?? [];
+    modelTable.clear(byModel.length > 0 ? undefined : s.noData);
+    for (const m of byModel) {
+      modelTable.addRow([m.model, String(m.calls ?? 0), fmtNum(m.credit), fmtNum(m.prompt), fmtNum(m.completion)]);
+    }
+
+    const packages = state?.balance?.packages ?? [];
+    pkgTable.clear(packages.length > 0 ? undefined : s.noData);
+    for (const p of packages) {
+      const cycle = [p.cycleStart, p.cycleEnd].filter(Boolean).join(' → ') || '—';
+      pkgTable.addRow([p.name ?? '—', fmtNum(p.remain), fmtNum(p.used), cycle]);
+    }
+
+    promoWrap.replaceChildren();
+    const promos = state?.promos ?? [];
+    if (promos.length === 0) {
+      promoWrap.append(ui.h('div', 'dim', s.noData));
+    }
+    for (const p of promos) {
+      const row = ui.h('div');
+      row.style.display = 'flex';
+      row.style.gap = '8px';
+      row.style.alignItems = 'center';
+      row.style.padding = '4px 0';
+      row.append(ui.pill(p.badge || p.id, p.active ? 'on' : 'plain'));
+      const text = [
+        p.discountText || p.hoverText,
+        p.windowText || p.absoluteText,
+        (p.models ?? []).join(' / '),
+        p.active ? s.promoActive : s.promoSoon,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const label = ui.h('div', 'dim', text);
+      label.style.fontSize = '12px';
+      if (p.hoverText) label.title = p.hoverText;
+      row.append(label);
+      promoWrap.append(row);
+    }
+
+    const recent = state?.summary?.recent ?? [];
+    recentTable.clear(recent.length > 0 ? undefined : s.noData);
+    for (const r of recent) {
+      const when = (() => {
+        try {
+          return new Date(r.ts).toLocaleString();
+        } catch {
+          return String(r.ts);
+        }
+      })();
+      recentTable.addRow([
+        when,
+        r.model ?? '—',
+        fmtNum(r.totalTokens ?? (r.promptTokens ?? 0) + (r.completionTokens ?? 0)),
+        r.ok === false ? '—' : fmtNum(r.credit),
+        typeof r.durationMs === 'number' ? `${r.durationMs} ms` : '—',
+      ]);
+    }
+  }
+
+  async function load() {
+    state = await ctx.invoke('state');
+    errLine.textContent = state?.ok === false ? state.error ?? '' : '';
+    render();
+  }
+
+  refreshBtn.addEventListener('click', async () => {
+    const off = ui.disable(refreshBtn);
+    refreshBtn.textContent = s.refreshing;
+    try {
+      state = await ctx.invoke('refresh');
+      render();
+      ui.toast(`${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`);
+    } catch (err) {
+      errLine.textContent = String(err?.message ?? err);
+      ui.toast(String(err?.message ?? err), 'bad');
+    } finally {
+      refreshBtn.textContent = s.usageRefresh;
+      off.dispose();
+    }
+  });
+
+  clearBtn.addEventListener('click', async () => {
+    const off = ui.disable(clearBtn);
+    try {
+      state = await ctx.invoke('clear');
+      render();
+      ui.toast(s.usageCleared);
+    } catch (err) {
+      ui.toast(String(err?.message ?? err), 'bad');
+    } finally {
+      off.dispose();
+    }
+  });
+
+  ctx.stream({
+    message: () => load().catch(() => {}),
+  });
+
+  load().catch((err) => {
+    errLine.textContent = String(err?.message ?? err);
+  });
+}
+
 export default {
   panels: {
     models: { mount: mountModels },
     account: { mount: mountAccount },
     priority: { mount: mountPriority },
+    usage: { mount: mountUsage },
   },
 };

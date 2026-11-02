@@ -15,6 +15,8 @@
  * 本模块可能需要跟着调整；解析一律宽容，缺字段留空，不虚构。
  */
 
+import { attachPromos, parsePromos } from './promo.js';
+
 /** 两个区域的官方上游域名。 */
 export const WB_REGION_BASE = {
   cn: 'https://copilot.tencent.com',
@@ -22,6 +24,14 @@ export const WB_REGION_BASE = {
 };
 
 const MODELS_PATH = '/v2/enterprises/personal/models';
+/**
+ * 产品配置文档：模型目录 + 价格 + **促销徽标**（`modelPromotions` / `modelTiers`）。
+ *
+ * 实测（2026-11-03 CN）：用它读到的文档和 WorkBuddy 应用自己读的是同一份，比旧的
+ * `/v2/enterprises/personal/models` 多出促销信息，模型条目字段完全兼容，所以现在优先
+ * 读它、失败再退回旧路径（拿不到促销时只是没有折扣信息，不影响调用）。
+ */
+const CONFIG_PATH = '/v3/config';
 const CHAT_PATH = '/v2/chat/completions';
 const REFRESH_PATH = '/v2/auth/refresh';
 /**
@@ -41,6 +51,15 @@ const WB_BILLING_BASE = {
 };
 
 const PRODUCT_UA = 'WorkBuddy/2.63.2';
+/**
+ * 产品配置通道的 User-Agent —— 必须是**应用**身份而不是 CLI 身份。
+ *
+ * 实测（2026-11-03，同一 token、同一 URL，只改这一个头）：
+ *   - `CLI/2.63.2 CodeBuddy/2.63.2`          → 文档里没有 modelPromotions / modelTiers；
+ *   - `WorkBuddy/5.8.3 WorkBuddy/5.8.3 CLI/2.161.0` → 60 个模型 + 5 条促销 + 1 条会员档位。
+ * 也就是说「促销读不到」曾经不是上游没发布，而是请求冒充了不发布它的通道。
+ */
+const APP_CHANNEL_UA = 'WorkBuddy/5.8.3 WorkBuddy/5.8.3 CLI/2.161.0';
 
 export class WbUpstreamError extends Error {
   /**
@@ -96,10 +115,60 @@ export class WbUpstream {
   }
 
   /**
-   * 读取模型目录。返回规范化后的模型数组；解析不出的字段留空。
+   * 读取模型目录 + 促销（同一个文档）。
+   *
+   * 返回 `{ models, promos, source }`：
+   *   - `models` 已把促销挂到各自条目上（`model.promos`，未解析生效与否）；
+   *   - `promos` 是归一化后的促销列表，供「限时优惠」面板直接展示；
+   *   - `source` 是 `'v3-config'` 或 `'legacy'`（后者没有促销）。
+   *
+   * 读 `/v3/config` 用应用身份（见 APP_CHANNEL_UA）；它失败、非 0 或解析不出模型时，
+   * 退回旧目录路径，保证「目录失败」不会连带把对话一起弄坏。
+   * @param {{ accessToken: string }} cred
+   */
+  async fetchCatalog(cred) {
+    try {
+      const res = await fetch(this.url(CONFIG_PATH), {
+        method: 'GET',
+        headers: {
+          ...commonHeaders(cred),
+          'User-Agent': APP_CHANNEL_UA,
+          'X-IDE-Type': 'APP',
+          'X-Product-Version': '5.8.3',
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const body = await res.json().catch(() => null);
+      const data = body?.data ?? body;
+      if (res.ok && data && typeof data === 'object') {
+        const rawModels = Array.isArray(data.models) ? data.models : [];
+        const models = rawModels.map((m) => normalizeModel(m)).filter((m) => m && m.id);
+        if (models.length > 0) {
+          const promos = parsePromos(data.modelPromotions, data.modelTiers);
+          return { models: attachPromos(models, promos), promos, source: 'v3-config' };
+        }
+      }
+    } catch (err) {
+      this.log?.warn?.(`产品配置读取失败，退回旧目录路径：${err?.message ?? err}`);
+    }
+    const models = await this.fetchModelsLegacy(cred);
+    return { models, promos: [], source: 'legacy' };
+  }
+
+  /**
+   * 读取模型目录（兼容入口）。
    * @param {{ accessToken: string }} cred
    */
   async fetchModels(cred) {
+    const { models } = await this.fetchCatalog(cred);
+    return models;
+  }
+
+  /**
+   * 旧目录路径（无促销）。保留作为 `/v3/config` 的降级。
+   * @param {{ accessToken: string }} cred
+   */
+  async fetchModelsLegacy(cred) {
     const res = await fetch(this.url(MODELS_PATH), {
       method: 'GET',
       headers: commonHeaders(cred),
@@ -124,7 +193,6 @@ export class WbUpstream {
     if (!Array.isArray(list)) return [];
     return list.map((m) => normalizeModel(m)).filter((m) => m && m.id);
   }
-
   /**
    * 只读积分余额（按套餐聚合前的原始条目）。接口属于计费域，
    * 上游若调整路径，这里抛错、调用方降级显示，不影响模型目录与对话。
@@ -161,20 +229,33 @@ export class WbUpstream {
     }
     const wrapper = body?.data?.Response?.Data ?? body?.data ?? null;
     const list = wrapper?.Accounts ?? wrapper?.accounts ?? wrapper?.packages ?? [];
-    if (!Array.isArray(list)) return { total: null, packages: [] };
+    if (!Array.isArray(list)) return { total: null, used: null, packages: [], accounts: 0 };
     let total = 0;
+    let used = 0;
+    let accounts = 0;
     const packages = [];
     for (const p of list) {
-      // 与官方客户端同口径：优先 cycle 家族的精确剩余。
+      // 与官方客户端同口径：优先 cycle 家族的精确剩余/已用。
       const remain = Number(p?.CycleCapacityRemainPrecise ?? p?.cycleRemain ?? p?.CapacityRemain ?? 0);
       if (!Number.isFinite(remain)) continue;
+      const spent = Number(p?.CycleCapacityUsedPrecise ?? p?.CapacityUsedPrecise ?? p?.CapacityUsed ?? 0);
+      const size = Number(p?.CycleCapacitySizePrecise ?? p?.CapacitySizePrecise ?? p?.CapacitySize ?? 0);
       total += remain;
+      if (Number.isFinite(spent)) used += spent;
+      accounts += 1;
       packages.push({
         name: String(p?.PackageName ?? p?.packageName ?? '积分包'),
         remain,
+        used: Number.isFinite(spent) ? spent : 0,
+        size: Number.isFinite(size) ? size : 0,
+        cycleStart: str(p?.CycleStartTime),
+        cycleEnd: str(p?.CycleEndTime),
+        expiresAt: str(p?.ExpiredTime),
+        status: typeof p?.Status === 'number' ? p.Status : undefined,
       });
     }
-    return { total, packages };
+    packages.sort((a, b) => b.remain - a.remain);
+    return { total, used, packages, accounts };
   }
 
   /**
@@ -220,7 +301,7 @@ export class WbUpstream {
    * @param {{ accessToken: string }} cred
    * @param {{ model: string, messages: Array<{role: string, content: string}>, maxTokens?: number, signal?: AbortSignal }} req
    * @param {(delta: string) => void} onDelta
-   * @returns {Promise<{ text: string, credit?: number }>}
+   * @returns {Promise<{ text: string, credit?: number, usage?: { promptTokens?: number, completionTokens?: number, totalTokens?: number, cachedTokens?: number, reasoningTokens?: number, credit?: number } }>}
    */
   async chat(cred, req, onDelta) {
     const res = await fetch(this.url(CHAT_PATH), {
@@ -243,6 +324,7 @@ export class WbUpstream {
     }
     let text = '';
     let credit;
+    let usage;
     const decoder = new TextDecoder();
     let buf = '';
     for await (const chunk of res.body) {
@@ -273,11 +355,33 @@ export class WbUpstream {
           onDelta(delta);
         }
         if (typeof evt.credit === 'number') credit = evt.credit;
-        if (evt.usage && typeof evt.usage.credit === 'number') credit = evt.usage.credit;
+        if (evt.usage && typeof evt.usage === 'object') {
+          // 最后一段 SSE 带完整用量（实测：prompt_tokens / completion_tokens / total_tokens /
+          // 明细里的 cached_tokens、reasoning_tokens，以及本次真实扣费 credits 的 `credit`）。
+          const u = evt.usage;
+          usage = {
+            promptTokens: numberOrUndefined(u.prompt_tokens),
+            completionTokens: numberOrUndefined(u.completion_tokens),
+            totalTokens: numberOrUndefined(u.total_tokens),
+            cachedTokens:
+              numberOrUndefined(u.prompt_tokens_details?.cached_tokens) ?? numberOrUndefined(u.cached_tokens),
+            reasoningTokens:
+              numberOrUndefined(u.completion_tokens_details?.reasoning_tokens) ??
+              numberOrUndefined(u.completion_thinking_tokens),
+            credit: numberOrUndefined(u.credit),
+          };
+          if (typeof u.credit === 'number') credit = u.credit;
+        }
       }
     }
-    return { text, credit };
+    return { text, credit, usage };
   }
+}
+
+/** `0` 是合法用量，只有 null / undefined / NaN 才算「没有」。 */
+function numberOrUndefined(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** 解析上游模型条目。credits 形如 "x0.79" / "0.79" / 0.79，倍率完全由上游给出。 */
@@ -291,6 +395,8 @@ function normalizeModel(m) {
     contextWindow: num(m.maxInputTokens ?? m.contextWindow ?? m.context_window),
     maxTokens: num(m.maxOutputTokens ?? m.maxTokens ?? m.max_tokens),
     creditMultiplier: parseCredits(m.credits ?? m.creditMultiplier),
+    /** 原始倍率文本（`"x0.11"`），促销计算按它取基准价。 */
+    credits: str(m.credits),
     supportsImages: m.supportsImages === true && m.disabledMultimodal !== true,
     supportsToolCall: m.supportsToolCall === true || m.supports_tool_call === true,
     description: str(m.descriptionZh ?? m.description ?? m.descriptionEn),

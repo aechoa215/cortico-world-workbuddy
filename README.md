@@ -139,18 +139,38 @@ Coopanion (Coo)
 
 | 面板 | 内容 |
 |---|---|
-| 模型目录 | 刷新目录；逐模型一行：名称/id、**默认积分倍率**（x0 标「免费」）、上下文、推理档、「选用」按钮 |
+| 模型目录 | 刷新目录；逐模型一行：名称/id、**此刻倍率**（含限时折扣时显示 `x0.5 ← x0.79 23:00–07:50`，x0 标「免费」）、上下文、推理档、「选用」按钮 |
 | 账号 | 登录态来源（本机发现 / 手动）、掩码 token、积分余额查询、重新检测、手动 token 存取 |
 | 是否启用 WorkBuddy | 「中转站优先」开关 + 主进程状态，与开始页按钮同步 |
+| 用量 | 区间概览（今天 / 近 7 天 / 近 30 天）、按模型聚合、积分包明细、限时优惠清单、最近调用；带「刷新余额」「清空本地账本」 |
+
+### 倍率与限时优惠怎么算
+
+- 目录来自 `GET /v3/config`（应用身份 UA）：一次同时拿到 `models`、`modelPromotions`、`modelTiers`。
+  用 CLI 身份只能读到精简目录，促销字段会整段缺失——这是「倍率永远显示原价」的根因。
+- 一条促销的生效条件是 `schedule`：`timezone`（默认按条目给的时区算）、`validFrom`/`validUntil`、
+  `daily` 时段（支持 `23:00`→`07:50` 这类跨零点窗口）。命中的条目按 `priority` 取最高；平手时促销优先于档位。
+- `discount.discountedCredits`（如 `0.50x`）**就是生效倍率本身**，不是相对原价的系数。
+  `displayMode: "replace"` 直接替换显示，`"strikethrough"` 表示「划线原价 + 新价」并排。
+- `badge.display: "activeOnly"` 的徽标只在生效时段出现（如「限时免费」试用）。
+
+### 用量统计口径
+
+- 每次 `wb_chat` 记一行到 `%APPDATA%\..\Coopanion\data\home\companion\data\workbuddy-usage.jsonl`
+  （实机路径；实际就是 `ctx.dataDir`）：`ts/model/region/ok/promptTokens/completionTokens/totalTokens/cachedTokens/reasoningTokens/credit/multiplier/promoId/source/durationMs`。
+- `credit` 取 SSE 最后一段的 `usage.credit`，即**上游真实扣费**；倍率 0.11 的模型单次请求不足 1 分时上游就是 0，这里照抄不折算。
+- 积分包余额另存 `workbuddy-balance.json`（`POST /v2/billing/meter/get-user-resource` 的 `*Precise` 字段求和），
+  面板上的「刷新余额」会重取一次。
+- 账本只保留 90 天，读的时候顺带裁掉；「清空本地账本」会把它清成空文件，服务端数据不受影响。
 
 ## 工具（给 Coo / 模型调用）
 
 | 工具 | 作用 |
 |---|---|
-| `wb_list_models` | 列出目录中全部模型及各自默认积分倍率（只读） |
-| `wb_select_model` | 按 id 选择 `wb_chat` 的默认模型，持久化 |
-| `wb_chat` | 用选中模型回答一个单轮问题（**真实消耗积分**，需主进程在跑） |
-| `wb_credits` | 只读查询积分余额（需主进程在跑） |
+| `wb_list_models` | 列出目录中全部模型及**此刻倍率**（含限时优惠与时段），并单列优惠清单（只读） |
+| `wb_select_model` | 按 id 选择 `wb_chat` 的默认模型，持久化；提示此刻倍率 |
+| `wb_chat` | 用选中模型回答一个单轮问题（**真实消耗积分**，需主进程在跑）；回执附输入/输出/缓存 token 与本次积分 |
+| `wb_credits` | 只读查询积分余额与本周期已用（需主进程在跑） |
 
 ## 配置（`worlds.workbuddy.*`）
 

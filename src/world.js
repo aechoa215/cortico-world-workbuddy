@@ -10,6 +10,8 @@ import { WB_CONFIG_GROUP } from './config.js';
 import { WB_REGION_BASE, WbUpstream, WbUpstreamError } from './upstream.js';
 import { discoverCredentials, maskToken, resolveTokensWithKey } from './credentials.js';
 import { detectWorkBuddy } from './wbproc.js';
+import { attachPromos, dailyWindowText, discountText, priceViewOf, promoActiveAt } from './promo.js';
+import { UsageLedger, summarize } from './usage.js';
 import { backupPathOf, describeHostInjection, ensureHostInjection, findAppRoot, inspectHostInjection, removeHostInjection } from './host.js';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -127,6 +129,20 @@ export class WorkBuddyWorld {
     this.hostUi = null;
     /** @type {ReturnType<typeof setInterval> | null} */
     this._hostTimer = null;
+    /**
+     * 目录里带进来的促销 / 档位（/v3/config 的 modelPromotions + modelTiers）。
+     * 倍率不能只看模型的 credits：夜间折扣、限时免费都挂在这些条目上。
+     * @type {Array<Record<string, unknown>>}
+     */
+    this.promos = [];
+    /** 目录来源：v3-config（带促销）或 legacy（只有倍率）。 */
+    this.catalogSource = '';
+    /** 每次调用的用量账本（本地 JSONL），以及最近一次积分包快照。 */
+    this.ledger = new UsageLedger({ dataDir: this.ctx.dataDir, log: this.log });
+    /** @type {null | { total: number | null, used: number | null, packages: unknown[], at: number }} */
+    this.lastBalance = null;
+    /** 今日用量小计。envPromptVars() 是同步的，所以这里存一份快照，由账本与每次调用刷新。 */
+    this.today = { day: '', credit: 0, calls: 0, prompt: 0, completion: 0 };
   }
 
   get cfg() {
@@ -367,6 +383,10 @@ export class WorkBuddyWorld {
       if (Array.isArray(saved.models)) {
         this.catalog = saved.models;
         this.catalogAt = Number(saved.at) || 0;
+        this.promos = Array.isArray(saved.promos) ? saved.promos : [];
+        this.catalogSource = typeof saved.source === 'string' ? saved.source : '';
+        // 老缓存里没带促销：把磁盘上的促销重新挂一遍，否则倍率会退回原价。
+        if (this.promos.length > 0) this.catalog = attachPromos(this.catalog, this.promos);
       }
     } catch {
       /* 损坏的缓存按没有处理 */
@@ -378,7 +398,17 @@ export class WorkBuddyWorld {
       await mkdir(this.ctx.dataDir, { recursive: true });
       await writeFile(
         this.catalogPath(),
-        JSON.stringify({ at: Date.now(), region: this.cfg.region, models: this.catalog }, null, 2),
+        JSON.stringify(
+          {
+            at: Date.now(),
+            region: this.cfg.region,
+            source: this.catalogSource,
+            models: this.catalog,
+            promos: this.promos,
+          },
+          null,
+          2,
+        ),
         'utf8',
       );
     } catch (err) {
@@ -389,8 +419,10 @@ export class WorkBuddyWorld {
   async refreshCatalog() {
     const tokens = await this.ensureTokens();
     if (!tokens) throw new WbUpstreamError('no-auth', { kind: 'session_dead' });
-    const models = await this.upstream().fetchModels(tokens);
+    const { models, promos, source } = await this.upstream().fetchCatalog(tokens);
     this.catalog = models;
+    this.promos = promos;
+    this.catalogSource = source;
     this.catalogAt = Date.now();
     this.lastError = '';
     await this.saveCatalog();
@@ -408,18 +440,22 @@ export class WorkBuddyWorld {
 
   envPromptVars() {
     if (!this.cfg.envPrompt) return null;
-    const model = this.cfg.model ? this.findModel(this.cfg.model) : null;
+    const price = this.priceOf(this.cfg.model);
+    const promoBit =
+      price && price.promoId !== undefined && typeof price.effective === 'number'
+        ? `（限时 ${discountText(this.promos.find((p) => p.id === price.promoId)) || '优惠'}${price.windowText ? ` ${price.windowText}` : ''}）`
+        : '';
     return {
       'workbuddy.region': this.cfg.region === 'global' ? 'international' : 'domestic (CN)',
       'workbuddy.model': this.cfg.model || '(none selected)',
       'workbuddy.multiplier':
-        model && typeof model.creditMultiplier === 'number'
-          ? `x${model.creditMultiplier}`
-          : '(unknown)',
+        price && typeof price.effective === 'number' ? `x${price.effective}${promoBit}` : '(unknown)',
       'workbuddy.catalogSize': String(this.catalog.length),
       'workbuddy.authed': this.tokens ? 'yes' : 'no',
       'workbuddy.priority': this.preferOn ? 'on' : 'off',
       'workbuddy.process': this.proc.running ? 'running' : 'stopped',
+      'workbuddy.todayCredit': String(Math.round(this.today.credit * 100) / 100),
+      'workbuddy.todayTokens': String(this.today.prompt + this.today.completion),
     };
   }
 
@@ -493,6 +529,15 @@ export class WorkBuddyWorld {
         this.log.warn(`workbuddy: 启动时刷新目录失败：${this.lastError}`);
       });
     }
+    // 用量：今日小计从账本重算；余额快照后台补一份（查不到也不影响启动）。
+    try {
+      await this.refreshToday();
+    } catch (err) {
+      this.log.warn?.(`workbuddy: 读取用量账本失败：${err?.message ?? err}`);
+    }
+    if (this.tokens) {
+      void this.syncBalance().catch(() => {});
+    }
     await host.pushEvent({
       type: 'workbuddy.started',
       ts: new Date().toISOString(),
@@ -538,17 +583,40 @@ export class WorkBuddyWorld {
 
   toolListModels() {
     if (this.catalog.length === 0) return `WorkBuddy 模型目录为空。${this.lastError || '请先在面板刷新目录。'}`;
+    const now = Date.now();
     const lines = this.catalog.map((m) => {
       const parts = [`- ${m.id}`];
       if (m.name !== m.id) parts.push(`(${m.name})`);
-      if (typeof m.creditMultiplier === 'number') parts.push(`积分倍率 x${m.creditMultiplier}`);
+      const price = priceViewOf(m, now);
+      if (typeof price.base === 'number') {
+        const discounted =
+          price.promoId !== undefined && typeof price.effective === 'number' && price.effective < price.base;
+        parts.push(
+          discounted
+            ? `积分倍率 x${price.effective}（原价 x${price.base}${price.windowText ? `，${price.windowText}` : ''}）`
+            : `积分倍率 x${price.base}`,
+        );
+      }
+      if (price.badge) parts.push(`${price.badgeActive ? '优惠中' : '优惠'}：${price.badge}`);
       if (m.contextWindow) parts.push(`上下文 ${m.contextWindow}`);
       if (m.reasoning?.supportedEfforts) parts.push(`推理档 ${m.reasoning.supportedEfforts.join('/')}`);
       if (m.supportsImages) parts.push('支持图片输入');
       return parts.join('，');
     });
-    const current = this.cfg.model ? `当前选择：${this.cfg.model}\n` : '当前未选择模型。\n';
-    return current + lines.join('\n');
+    const current = this.cfg.model
+      ? `当前选择：${this.cfg.model}（此刻 ${this.selectedMultiplier() ?? '倍率未知'}）\n`
+      : '当前未选择模型。\n';
+    const promoLines = this.promos
+      .filter((p) => Array.isArray(p.modelIds) && p.modelIds.length > 0)
+      .map((p) => {
+        const base = this.findModel(p.modelIds[0]);
+        const view = priceViewOf({ ...(base ?? { id: p.modelIds[0] }), promos: [p] }, now);
+        const when = view.windowText || view.absoluteText || '';
+        const flag = view.promoId === p.id ? '生效中' : view.badgeActive ? '即将生效' : '未生效';
+        return `- ${p.id}：${discountText(p)}${when ? `，${when}` : ''}，影响 ${p.modelIds.join('/')}（${flag}）`;
+      });
+    const promoBlock = promoLines.length > 0 ? `\n限时优惠：\n${promoLines.join('\n')}` : '';
+    return current + lines.join('\n') + promoBlock;
   }
 
   async toolSelectModel(id) {
@@ -557,7 +625,13 @@ export class WorkBuddyWorld {
     this.cfg.model = id;
     // 框架的 ctx.persist(patch) 必须带 patch；只写本 World 段内的字段。
     this.ctx.persist({ model: id });
-    const mul = typeof model.creditMultiplier === 'number' ? `，默认积分倍率 x${model.creditMultiplier}` : '';
+    const price = this.priceOf(id);
+    const mul =
+      price && typeof price.effective === 'number'
+        ? price.promoId !== undefined && typeof price.base === 'number' && price.effective < price.base
+          ? `，此刻倍率 x${price.effective}（原价 x${price.base}${price.windowText ? `，${price.windowText}` : ''}）`
+          : `，此刻倍率 x${price.effective}`
+        : '';
     this.broadcast({ kind: 'selection', model: id });
     return `已选择 WorkBuddy 模型 ${model.name}（${id}）${mul}。之后 wb_chat 默认用它。`;
   }
@@ -576,20 +650,63 @@ export class WorkBuddyWorld {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     messages.push({ role: 'user', content: prompt });
+    const price = this.priceOf(useId);
+    const startedAt = Date.now();
+    /** 记一笔账本；失败不影响本次调用的回执。 */
+    const record = async (entry) => {
+      try {
+        await this.ledger.append({ ts: startedAt, model: useId, region: this.cfg.region, source: this.tokens?.source ?? '', ...entry });
+      } catch (err) {
+        this.log.warn?.(`workbuddy: 用量落盘失败：${err?.message ?? err}`);
+      }
+    };
     try {
-      const { text, credit } = await this.upstream().chat(
+      const { text, credit, usage } = await this.upstream().chat(
         tokens,
         { model: useId, messages, maxTokens: this.cfg.maxTokens },
         () => {},
       );
-      const meta = this.findModel(useId);
-      const mul = meta && typeof meta.creditMultiplier === 'number' ? `（倍率 x${meta.creditMultiplier}）` : '';
-      const cost = typeof credit === 'number' ? `\n本次消耗积分：${credit}` : '';
-      return `WorkBuddy 模型 ${useId}${mul} 回答：\n${text}${cost}`;
+      const durationMs = Date.now() - startedAt;
+      const used = typeof usage?.credit === 'number' ? usage.credit : credit;
+      await record({
+        ok: true,
+        promptTokens: usage?.promptTokens,
+        completionTokens: usage?.completionTokens,
+        totalTokens: usage?.totalTokens,
+        cachedTokens: usage?.cachedTokens,
+        reasoningTokens: usage?.reasoningTokens,
+        credit: used,
+        multiplier: price?.effective,
+        promoId: price?.promoId,
+        durationMs,
+      });
+      if (typeof used === 'number') this.today.credit += used;
+      this.today.calls += 1;
+      if (typeof usage?.promptTokens === 'number') this.today.prompt += usage.promptTokens;
+      if (typeof usage?.completionTokens === 'number') this.today.completion += usage.completionTokens;
+
+      const parts = [];
+      if (typeof price?.effective === 'number') {
+        parts.push(
+          price.promoId !== undefined && typeof price.base === 'number' && price.effective < price.base
+            ? `倍率 x${price.effective}（原价 x${price.base}${price.windowText ? `，${price.windowText}` : ''}）`
+            : `倍率 x${price.effective}`,
+        );
+      }
+      const head = `WorkBuddy 模型 ${useId}${parts.length ? `（${parts.join('，')}）` : ''} 回答：\n${text}`;
+      const bits = [];
+      if (typeof usage?.promptTokens === 'number') bits.push(`输入 ${usage.promptTokens} tok`);
+      if (typeof usage?.completionTokens === 'number') bits.push(`输出 ${usage.completionTokens} tok`);
+      if (typeof usage?.cachedTokens === 'number' && usage.cachedTokens > 0) bits.push(`缓存命中 ${usage.cachedTokens} tok`);
+      if (typeof usage?.totalTokens === 'number') bits.push(`共 ${usage.totalTokens} tok`);
+      if (typeof used === 'number') bits.push(`本次消耗积分 ${used}`);
+      const usageLine = bits.length > 0 ? `\n用量：${bits.join(' / ')}（${durationMs} ms）` : '';
+      return head + usageLine;
     } catch (err) {
       if (err instanceof WbUpstreamError && err.kind === 'session_dead') {
         this.tokens = null; // 下次调用重新发现
       }
+      await record({ ok: false, error: String(err?.message ?? err), durationMs: Date.now() - startedAt });
       return { text: `WorkBuddy 调用失败：${err?.message ?? err}`, failed: true };
     }
   }
@@ -602,10 +719,13 @@ export class WorkBuddyWorld {
     const tokens = await this.ensureTokens();
     if (!tokens) return { text: '未发现 WorkBuddy 登录态。', failed: true };
     try {
-      const { total, packages } = await this.upstream().fetchCredits(tokens);
+      const { total, used, packages } = await this.upstream().fetchCredits(tokens);
       if (total === null) return '上游未返回积分数据。';
-      const lines = packages.slice(0, 10).map((p) => `- ${p.name}：${p.remain}`);
-      return `当前积分合计约 ${total}${lines.length ? `\n${lines.join('\n')}` : ''}`;
+      this.lastBalance = { total, used: used ?? null, packages, at: Date.now() };
+      void this.ledger.writeBalance(this.lastBalance).catch(() => {});
+      const lines = packages.slice(0, 10).map((p) => `- ${p.name}：剩余 ${p.remain}${typeof p.used === 'number' ? `，已用 ${p.used}` : ''}`);
+      const usedBit = typeof used === 'number' ? `（本周期已用 ${used}）` : '';
+      return `当前积分合计约 ${total}${usedBit}${lines.length ? `\n${lines.join('\n')}` : ''}`;
     } catch (err) {
       return { text: `积分查询失败：${err?.message ?? err}`, failed: true };
     }
@@ -661,6 +781,11 @@ export class WorkBuddyWorld {
           value: this.selectedMultiplier() ?? '—',
           tone: 'plain',
         },
+        {
+          label: zh ? '今日积分' : 'Today',
+          value: `${Math.round(this.today.credit * 100) / 100}`,
+          tone: this.today.credit > 0 ? 'on' : 'plain',
+        },
       ],
       config: [WB_CONFIG_GROUP],
       panels: [
@@ -688,6 +813,14 @@ export class WorkBuddyWorld {
             : 'Same state as the “Relay first” button on the Home page: when on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Off by default.',
           getMethods: ['state'],
         },
+        {
+          id: 'usage',
+          title: zh ? '用量' : 'Usage',
+          description: zh
+            ? '本机记账的调用用量（积分与 token）、WorkBuddy 积分包余额，以及当前生效的限时折扣 / 免费。'
+            : 'Call usage recorded locally (credits and tokens), WorkBuddy credit balance, and currently active time-limited discounts / free tiers.',
+          getMethods: ['state'],
+        },
       ],
       promptDocs: [
         {
@@ -704,13 +837,15 @@ export class WorkBuddyWorld {
             { name: 'workbuddy.authed', description: '是否已有可用登录态。' },
             { name: 'workbuddy.priority', description: '「中转站优先」开关：on / off。' },
             { name: 'workbuddy.process', description: 'WorkBuddy 主进程状态：running / stopped。' },
+            { name: 'workbuddy.todayCredit', description: '今日已消耗积分（本地记账）。' },
+            { name: 'workbuddy.todayTokens', description: '今日 token 用量（本地记账）。' },
           ],
         },
       ],
       storage: [{ key: 'workbuddy-catalog', label: zh ? '模型目录缓存' : 'Model catalog cache' }],
       invoke: (panel, method, args) => this.handleInvoke(panel, method, args, language),
       stream: (panel, socket) => {
-        if (panel !== 'models' && panel !== 'account' && panel !== 'priority') {
+        if (panel !== 'models' && panel !== 'account' && panel !== 'priority' && panel !== 'usage') {
           socket.close('unknown panel');
           return;
         }
@@ -720,9 +855,104 @@ export class WorkBuddyWorld {
     };
   }
 
+  /** 某个模型此刻的价格视图（含限时折扣 / 免费）。 */
+  priceOf(id) {
+    const model = id ? this.findModel(id) : null;
+    return model ? priceViewOf(model, Date.now()) : null;
+  }
+
   selectedMultiplier() {
-    const m = this.cfg.model ? this.findModel(this.cfg.model) : null;
-    return m && typeof m.creditMultiplier === 'number' ? `x${m.creditMultiplier}` : null;
+    const price = this.priceOf(this.cfg.model);
+    if (!price) return null;
+    if (typeof price.effective !== 'number') return null;
+    if (price.effective === 0) return 'x0（限时免费）';
+    return price.promoId !== undefined && price.effective < price.base
+      ? `x${price.effective}（原价 x${price.base}）`
+      : `x${price.effective}`;
+  }
+
+  /** 查一次积分包余额，落一份快照（面板与 wb_credits 共用）。 */
+  async syncBalance() {
+    const tokens = await this.ensureTokens();
+    if (!tokens) return null;
+    try {
+      const r = await this.upstream().fetchCredits(tokens);
+      /** @type {{ total: number | null, used: number | null, packages: unknown[], at: number }} */
+      const snapshot = { total: r.total ?? null, used: r.used ?? null, packages: r.packages ?? [], at: Date.now() };
+      this.lastBalance = snapshot;
+      await this.ledger.writeBalance(snapshot);
+      return snapshot;
+    } catch (err) {
+      this.log.warn?.(`workbuddy: 积分包快照失败：${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  /**
+   * 用量面板的数据面：本地账本聚合 + 积分包快照 + 促销清单。
+   *
+   * 口径：积分以每次调用 SSE 里的 `usage.credit` 为准（上游真实扣费）；
+   * 倍率只用于「预估/解释」，不拿它去折算金额。
+   */
+  async usageState() {
+    const now = Date.now();
+    await this.ledger.prune(now);
+    const records = await this.ledger.readAll();
+    const summary = summarize(records, now, { days: 30 });
+    const balance = this.lastBalance ?? (await this.ledger.readBalance());
+    const promos = this.promos.map((promo) => {
+      const firstId = Array.isArray(promo.modelIds) ? promo.modelIds[0] : undefined;
+      const base = firstId ? this.findModel(firstId) : null;
+      const view = priceViewOf({ ...(base ?? { id: firstId ?? '' }), promos: [promo] }, now);
+      return {
+        id: promo.id,
+        kind: promo.kind ?? '',
+        source: promo.source ?? '',
+        models: promo.modelIds ?? [],
+        badge: promo.badge?.label ?? '',
+        // 有的条目只是「徽标」（没有 discount 字段）：它的生效与否只能看时段，
+        // 所以这里用 promoActiveAt 判断，而不是拿「是否改价」判断。
+        active: promoActiveAt(promo, now),
+        discountActive: view.promoId === promo.id,
+        badgeActive: view.badgeActive,
+        windowText: view.windowText,
+        absoluteText: view.absoluteText,
+        hoverText: view.hoverText ?? '',
+        discountText: discountText(promo),
+        effective: view.effective,
+      };
+    });
+    return {
+      ok: true,
+      summary,
+      balance,
+      promos,
+      catalogSource: this.catalogSource,
+      catalogAt: this.catalogAt,
+      model: this.cfg.model,
+      price: this.priceOf(this.cfg.model),
+      region: this.cfg.region,
+      running: !!this.proc.running,
+      authed: !!this.tokens,
+    };
+  }
+
+  /** 从账本重算今日小计（启动时 + 每次调用后调用）。 */
+  async refreshToday() {
+    const records = await this.ledger.readAll();
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const day = start.toISOString().slice(0, 10);
+    const today = { day, credit: 0, calls: 0, prompt: 0, completion: 0 };
+    for (const r of records) {
+      if (typeof r?.ts !== 'number' || r.ts < start.getTime()) continue;
+      today.calls += 1;
+      if (typeof r.credit === 'number') today.credit += r.credit;
+      if (typeof r.promptTokens === 'number') today.prompt += r.promptTokens;
+      if (typeof r.completionTokens === 'number') today.completion += r.completionTokens;
+    }
+    this.today = today;
+    return today;
   }
 
   broadcast(obj) {
@@ -778,6 +1008,21 @@ export class WorkBuddyWorld {
       }
       throw new Error(`unknown method: ${method}`);
     }
+    // 「用量」面板：本地账本聚合 + 积分包快照 + 促销清单。积分以 usage.credit 为准，不拿倍率倒推。
+    if (panel === 'usage') {
+      if (method === 'state') return await this.usageState();
+      if (method === 'refresh') {
+        await this.syncBalance();
+        return await this.usageState();
+      }
+      if (method === 'clear') {
+        await this.ledger.clear();
+        await this.refreshToday();
+        this.broadcast({ kind: 'usage', cleared: true });
+        return await this.usageState();
+      }
+      throw new Error(`unknown method: ${method}`);
+    }
     if (method === 'state') {
       return {
         authed: !!this.tokens,
@@ -789,7 +1034,7 @@ export class WorkBuddyWorld {
         model: this.cfg.model,
         catalogAt: this.catalogAt,
         lastError: this.lastError,
-        models: this.catalog,
+        models: this.catalog.map((m) => ({ ...m, price: priceViewOf(m, Date.now()) })),
         prefer: this.preferOn,
         running: !!this.proc.running,
         mainPid: this.proc.mainPid,
@@ -834,6 +1079,8 @@ export class WorkBuddyWorld {
       if (!tokens) return { ok: false, error: t(language, 'noAuth') };
       try {
         const r = await this.upstream().fetchCredits(tokens);
+        this.lastBalance = { total: r.total ?? null, used: r.used ?? null, packages: r.packages ?? [], at: Date.now() };
+        void this.ledger.writeBalance(this.lastBalance).catch(() => {});
         return { ok: true, ...r };
       } catch (err) {
         return { ok: false, error: err?.message ?? String(err) };

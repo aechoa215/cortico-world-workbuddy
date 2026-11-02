@@ -1,5 +1,29 @@
 # 更新日志
 
+## 0.1.6
+
+新增「用量」面板与真实的时段优惠计算（只在本机验证，未发布）。
+
+- **优惠来自 `/v3/config`**：改用应用身份 UA（`WorkBuddy/5.8.3 … CLI/2.161.0`）拉取目录，
+  同时拿到 `modelPromotions` / `modelTiers`。用 CLI 身份只能读到精简后的目录，
+  促销与档位字段整个缺失——这是之前倍率「永远显示原价」的根因。
+- **新增 `src/promo.js`**：解析 `schedule`（`timezone` / `validFrom` / `validUntil` / 跨零点的 `daily`
+  时段、`dailyUnusable`）、`discount`（`discountedCredits` 就是生效倍率本身，不是相对系数）、
+  `badge`（含 `display:"activeOnly"`）与 `priority`；按优先级选出此刻生效的那条。
+  `priceViewOf(model, now)` 给出 `{base, effective, promoId, badge, windowText, hoverText, isFree}`。
+- **新增「用量」面板**（`world:workbuddy` 第 4 个页签）：区间概览（今天 / 近 7 天 / 近 30 天）、
+  按模型聚合、积分包明细、限时优惠清单、最近调用明细；带「刷新余额」与「清空本地账本」。
+- **新增 `src/usage.js`**：每次 `wb_chat` 往 `<dataDir>/workbuddy-usage.jsonl` 记一行
+  （tokens 来自 SSE 的 `usage`，积分来自 `usage.credit` 即上游真实扣费，倍率记当时生效值），
+  读的时候裁掉 90 天以前的行；余额快照另存 `workbuddy-balance.json`。
+- `fetchCredits` 现在返回 `{total, used, packages[]}`（逐包剩余 / 已用 / 周期），
+  `wb_credits` 一并打印「本周期已用」。
+- `wb_chat` 回执补充「用量：输入 N tok / 输出 N tok / 缓存命中 N tok / 共 N tok / 本次消耗积分 N（N ms）」。
+- `wb_list_models` 标注此刻生效倍率（含原价对比、时段）与优惠徽标；`wb_select_model` 提示此刻倍率。
+- 环境提示词新增 `{{workbuddy.todayCredit}}` / `{{workbuddy.todayTokens}}`，并在倍率旁说明已含生效中的限时优惠。
+- 详情页徽标增加「今日积分」。
+- 仓库补 `package-lock.json`（锁定 esbuild 0.24.2），CI 改为 `npm ci`：`dist` 的构建产物必须逐字节稳定，否则「dist 未同步」的检查会误报。
+
 ## 0.1.5
 
 发布前收尾：停用 / 卸载彻底不留痕，并把元数据指向真实仓库。

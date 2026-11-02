@@ -48,7 +48,36 @@ var TEXT = {
     repair: "\u91CD\u65B0\u6CE8\u5165\u5F00\u59CB\u9875\u6309\u94AE",
     repairing: "\u6B63\u5728\u91CD\u65B0\u6CE8\u5165\u2026",
     repaired: "\u5DF2\u4FEE\u590D\uFF0C\u91CD\u65B0\u6253\u5F00\u63A7\u5236\u53F0\u5373\u53EF\u770B\u5230\u6309\u94AE",
-    repairFail: "\u4FEE\u590D\u5931\u8D25"
+    repairFail: "\u4FEE\u590D\u5931\u8D25",
+    usageTitle: "\u7528\u91CF",
+    usageDesc: "\u672C\u673A\u8BB0\u8D26\u7684\u8C03\u7528\u7528\u91CF\u4E0E WorkBuddy \u79EF\u5206\u5305\u4F59\u989D\u3002\u79EF\u5206\u53D6\u4E0A\u6E38\u6BCF\u6B21\u8C03\u7528\u56DE\u4F20\u7684\u771F\u5B9E\u6263\u8D39\uFF08\u53EF\u80FD\u4E3A 0\uFF09\uFF0C\u500D\u7387\u6309\u76EE\u5F55 + \u9650\u65F6\u4F18\u60E0\u5B9E\u65F6\u8BA1\u7B97\u3002",
+    usageRefresh: "\u5237\u65B0\u4F59\u989D",
+    usageClear: "\u6E05\u7A7A\u672C\u5730\u8D26\u672C",
+    usageCleared: "\u672C\u5730\u8D26\u672C\u5DF2\u6E05\u7A7A",
+    metricCalls: "\u8C03\u7528",
+    metricCredit: "\u79EF\u5206",
+    metricInput: "\u8F93\u5165 tok",
+    metricOutput: "\u8F93\u51FA tok",
+    spanToday: "\u4ECA\u5929",
+    spanWeek: "\u8FD1 7 \u5929",
+    spanMonth: "\u8FD1 30 \u5929",
+    byModel: "\u6309\u6A21\u578B",
+    balanceTitle: "\u79EF\u5206\u5305\u4F59\u989D",
+    colPkgName: "\u79EF\u5206\u5305",
+    colPkgRemain: "\u5269\u4F59",
+    colPkgUsed: "\u5DF2\u7528",
+    colPkgCycle: "\u5468\u671F",
+    promosTitle: "\u9650\u65F6\u4F18\u60E0 / \u514D\u8D39",
+    promoActive: "\u751F\u6548\u4E2D",
+    promoSoon: "\u672A\u751F\u6548",
+    recentTitle: "\u6700\u8FD1\u8C03\u7528",
+    colTime: "\u65F6\u95F4",
+    colTokens: "token",
+    colDuration: "\u8017\u65F6",
+    noData: "\u6682\u65E0\u6570\u636E",
+    totalCredit: "\u5408\u8BA1\u79EF\u5206",
+    todayCredit: "\u4ECA\u65E5\u79EF\u5206",
+    todayTokens: "\u4ECA\u65E5 token"
   },
   en: {
     refresh: "Refresh from WorkBuddy",
@@ -98,16 +127,55 @@ var TEXT = {
     repair: "Re-inject the home button",
     repairing: "Re-injecting\u2026",
     repaired: "Fixed. Reopen the console to see the button",
-    repairFail: "Repair failed"
+    repairFail: "Repair failed",
+    usageTitle: "Usage",
+    usageDesc: "Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.",
+    usageRefresh: "Refresh balance",
+    usageClear: "Clear local ledger",
+    usageCleared: "Local ledger cleared",
+    metricCalls: "Calls",
+    metricCredit: "Credits",
+    metricInput: "Input tok",
+    metricOutput: "Output tok",
+    spanToday: "Today",
+    spanWeek: "Last 7 days",
+    spanMonth: "Last 30 days",
+    byModel: "By model",
+    balanceTitle: "Credit packages",
+    colPkgName: "Package",
+    colPkgRemain: "Remaining",
+    colPkgUsed: "Used",
+    colPkgCycle: "Cycle",
+    promosTitle: "Limited-time offers / free",
+    promoActive: "active",
+    promoSoon: "scheduled",
+    recentTitle: "Recent calls",
+    colTime: "Time",
+    colTokens: "tokens",
+    colDuration: "Latency",
+    noData: "No data",
+    totalCredit: "Total credits",
+    todayCredit: "Credits today",
+    todayTokens: "Tokens today"
   }
 };
 function strings(ctx) {
   return TEXT[ctx.language === "en" ? "en" : "zh"];
 }
 function fmtMultiplier(m, s) {
-  if (typeof m.creditMultiplier !== "number") return { text: "\u2014", free: false };
-  if (m.creditMultiplier === 0) return { text: `x0 \xB7 ${s.multiplierFree}`, free: true };
-  return { text: `x${m.creditMultiplier}`, free: false };
+  const price = m?.price;
+  const base = typeof price?.base === "number" ? price.base : typeof m?.creditMultiplier === "number" ? m.creditMultiplier : null;
+  const eff = typeof price?.effective === "number" ? price.effective : base;
+  if (base === null) return { text: "\u2014", free: false, promo: "" };
+  if (eff === 0) return { text: `x0 \xB7 ${s.multiplierFree}${price?.windowText ? ` ${price.windowText}` : ""}`, free: true, promo: price?.badge ?? "" };
+  if (typeof eff === "number" && eff < base) {
+    return {
+      text: `x${eff} \u2190 x${base}${price?.windowText ? ` ${price.windowText}` : ""}`,
+      free: false,
+      promo: price?.badge ?? ""
+    };
+  }
+  return { text: `x${base}`, free: false, promo: price?.badge ?? "" };
 }
 function fmtTs(ms, s) {
   if (!ms) return s.notRefreshed;
@@ -157,6 +225,7 @@ function mountModels(ctx) {
       nameCell.append(sub);
       if (m.description) nameCell.title = m.description;
       const mulPill = ui.pill(mul.text, mul.free ? "on" : "plain");
+      if (mul.promo) mulPill.title = mul.promo;
       const btn = ui.button(isCurrent ? s.selected : s.select, {
         size: "sm",
         variant: isCurrent ? "plain" : "primary",
@@ -387,11 +456,168 @@ function mountPriority(ctx) {
     statusLine.textContent = String(err?.message ?? err);
   });
 }
+function fmtNum(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "\u2014";
+  return String(Math.round(n * 100) / 100);
+}
+function mountUsage(ctx) {
+  const s = strings(ctx);
+  const { ui } = ctx;
+  const sheet = ui.sheet({ title: `${s.usageTitle} \xB7 WorkBuddy`, desc: s.usageDesc });
+  ctx.root.append(sheet.el);
+  const bar = ui.rowbar();
+  const refreshBtn = ui.button(s.usageRefresh, { variant: "primary", size: "sm" });
+  const clearBtn = ui.button(s.usageClear, { variant: "plain", size: "sm" });
+  const todayChip = ui.chip("", "accent");
+  const balanceChip = ui.chip("", "plain");
+  bar.append(refreshBtn, clearBtn, todayChip, balanceChip);
+  sheet.body.append(bar);
+  const errLine = ui.msgline();
+  sheet.body.append(errLine);
+  const overview = ui.table({
+    head: ["", s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    maxHeight: "220px"
+  });
+  sheet.body.append(overview.el);
+  const modelSection = ui.section(s.byModel);
+  const modelTable = ui.table({
+    head: [s.colModel, s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    maxHeight: "260px"
+  });
+  modelSection.append(modelTable.el);
+  sheet.body.append(modelSection);
+  const pkgSection = ui.section(s.balanceTitle);
+  const pkgTable = ui.table({
+    head: [s.colPkgName, s.colPkgRemain, s.colPkgUsed, s.colPkgCycle],
+    maxHeight: "220px"
+  });
+  pkgSection.append(pkgTable.el);
+  sheet.body.append(pkgSection);
+  const promoSection = ui.section(s.promosTitle);
+  const promoWrap = ui.h("div");
+  promoSection.append(promoWrap);
+  sheet.body.append(promoSection);
+  const recentSection = ui.section(s.recentTitle);
+  const recentTable = ui.table({
+    head: [s.colTime, s.colModel, s.colTokens, s.metricCredit, s.colDuration],
+    maxHeight: "300px"
+  });
+  recentSection.append(recentTable.el);
+  sheet.body.append(recentSection);
+  let state = null;
+  function spanRow(label, bucket) {
+    const b = bucket ?? {};
+    return [label, String(b.calls ?? 0), fmtNum(b.credit), fmtNum(b.prompt), fmtNum(b.completion)];
+  }
+  function render() {
+    const totals = state?.summary?.totals ?? {};
+    todayChip.textContent = `${s.todayCredit}: ${fmtNum(totals.today?.credit)} \xB7 ${s.todayTokens}: ${fmtNum(
+      (totals.today?.prompt ?? 0) + (totals.today?.completion ?? 0)
+    )}`;
+    balanceChip.textContent = `${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`;
+    const spans = [spanRow(s.spanToday, totals.today), spanRow(s.spanWeek, totals.week), spanRow(s.spanMonth, totals.month)];
+    overview.clear();
+    for (const row of spans) overview.addRow(row);
+    const byModel = state?.summary?.byModel ?? [];
+    modelTable.clear(byModel.length > 0 ? void 0 : s.noData);
+    for (const m of byModel) {
+      modelTable.addRow([m.model, String(m.calls ?? 0), fmtNum(m.credit), fmtNum(m.prompt), fmtNum(m.completion)]);
+    }
+    const packages = state?.balance?.packages ?? [];
+    pkgTable.clear(packages.length > 0 ? void 0 : s.noData);
+    for (const p of packages) {
+      const cycle = [p.cycleStart, p.cycleEnd].filter(Boolean).join(" \u2192 ") || "\u2014";
+      pkgTable.addRow([p.name ?? "\u2014", fmtNum(p.remain), fmtNum(p.used), cycle]);
+    }
+    promoWrap.replaceChildren();
+    const promos = state?.promos ?? [];
+    if (promos.length === 0) {
+      promoWrap.append(ui.h("div", "dim", s.noData));
+    }
+    for (const p of promos) {
+      const row = ui.h("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.alignItems = "center";
+      row.style.padding = "4px 0";
+      row.append(ui.pill(p.badge || p.id, p.active ? "on" : "plain"));
+      const text = [
+        p.discountText || p.hoverText,
+        p.windowText || p.absoluteText,
+        (p.models ?? []).join(" / "),
+        p.active ? s.promoActive : s.promoSoon
+      ].filter(Boolean).join(" \xB7 ");
+      const label = ui.h("div", "dim", text);
+      label.style.fontSize = "12px";
+      if (p.hoverText) label.title = p.hoverText;
+      row.append(label);
+      promoWrap.append(row);
+    }
+    const recent = state?.summary?.recent ?? [];
+    recentTable.clear(recent.length > 0 ? void 0 : s.noData);
+    for (const r of recent) {
+      const when = (() => {
+        try {
+          return new Date(r.ts).toLocaleString();
+        } catch {
+          return String(r.ts);
+        }
+      })();
+      recentTable.addRow([
+        when,
+        r.model ?? "\u2014",
+        fmtNum(r.totalTokens ?? (r.promptTokens ?? 0) + (r.completionTokens ?? 0)),
+        r.ok === false ? "\u2014" : fmtNum(r.credit),
+        typeof r.durationMs === "number" ? `${r.durationMs} ms` : "\u2014"
+      ]);
+    }
+  }
+  async function load() {
+    state = await ctx.invoke("state");
+    errLine.textContent = state?.ok === false ? state.error ?? "" : "";
+    render();
+  }
+  refreshBtn.addEventListener("click", async () => {
+    const off = ui.disable(refreshBtn);
+    refreshBtn.textContent = s.refreshing;
+    try {
+      state = await ctx.invoke("refresh");
+      render();
+      ui.toast(`${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`);
+    } catch (err) {
+      errLine.textContent = String(err?.message ?? err);
+      ui.toast(String(err?.message ?? err), "bad");
+    } finally {
+      refreshBtn.textContent = s.usageRefresh;
+      off.dispose();
+    }
+  });
+  clearBtn.addEventListener("click", async () => {
+    const off = ui.disable(clearBtn);
+    try {
+      state = await ctx.invoke("clear");
+      render();
+      ui.toast(s.usageCleared);
+    } catch (err) {
+      ui.toast(String(err?.message ?? err), "bad");
+    } finally {
+      off.dispose();
+    }
+  });
+  ctx.stream({
+    message: () => load().catch(() => {
+    })
+  });
+  load().catch((err) => {
+    errLine.textContent = String(err?.message ?? err);
+  });
+}
 var client_default = {
   panels: {
     models: { mount: mountModels },
     account: { mount: mountAccount },
-    priority: { mount: mountPriority }
+    priority: { mount: mountPriority },
+    usage: { mount: mountUsage }
   }
 };
 export {
