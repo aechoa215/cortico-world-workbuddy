@@ -634,7 +634,9 @@ export class WorkBuddyWorld {
           state: this.proc.running ? 'online' : 'offline',
           hint: this.proc.running
             ? `WorkBuddy 在跑（pid ${this.proc.mainPid ?? '?'}，${this.proc.via}）`
-            : '未检测到 WorkBuddy 主进程',
+            : this.started
+              ? '未检测到 WorkBuddy 主进程'
+              : '正在检测 WorkBuddy 主进程…',
         },
         {
           label: zh ? '中转站优先' : 'Relay first',
@@ -644,7 +646,7 @@ export class WorkBuddyWorld {
         {
           label: zh ? '开始页按钮' : 'Home button',
           state: this.hostUi?.ok ? 'online' : this.hostUi ? 'error' : 'offline',
-          hint: this.hostUiLine(),
+          hint: this.hostUi ? this.hostUiLine() : '正在检查宿主注入…',
         },
       ],
       badges: [
