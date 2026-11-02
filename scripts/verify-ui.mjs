@@ -282,6 +282,7 @@ for (let run = 1; run <= RUNS; run += 1) {
     row.checks.homeRoute = true;
     row.checks.homeNoInjection = home.injectedRow === false;
     row.checks.homeLabels = home.labels;
+    if (SHOTS && run === 1) await shot('home-clean');
     if (KEEP) await shot(`run${run}-home`);
   } catch (err) {
     row.checks.homeError = String(err.message || err);
