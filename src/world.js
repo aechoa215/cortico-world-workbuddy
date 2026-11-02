@@ -109,6 +109,8 @@ export class WorkBuddyWorld {
     this.catalogAt = 0;
     this.lastError = '';
     this.tokens = null; // { accessToken, refreshToken, source }
+    /** start() 是否跑完。没跑完时灯态一律显示「检查中」，否则会误报「未发现登录态」。 */
+    this.started = false;
     this._sockets = new Set();
     /**
      * 最近一次 WorkBuddy 主进程采样。envPromptVars() 是同步的，所以这里存一份快照，
@@ -449,6 +451,7 @@ export class WorkBuddyWorld {
 
   async start(host) {
     this.host = host;
+    this.started = false;
     this.loadCatalogFromDisk();
     await this.loadTokens();
     await this.syncProc(true);
@@ -500,6 +503,7 @@ export class WorkBuddyWorld {
         ? `WorkBuddy 桥接已挂载：${this.cfg.region} 区，目录 ${this.catalog.length} 个模型，当前模型 ${this.cfg.model || '(未选)'}。`
         : 'WorkBuddy 桥接已挂载，但未发现登录态；wb_* 工具暂不可用。',
     });
+    this.started = true;
   }
 
   async stop() {
@@ -621,7 +625,9 @@ export class WorkBuddyWorld {
           state: this.tokens ? 'online' : this.lastError ? 'error' : 'offline',
           hint: this.tokens
             ? `已登录（${this.tokens.source}），目录 ${this.catalog.length} 个模型`
-            : this.lastError || '未发现登录态',
+            : this.started
+              ? this.lastError || '未发现登录态'
+              : '正在读取登录态…',
         },
         {
           label: zh ? '主进程' : 'Process',

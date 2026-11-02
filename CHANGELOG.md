@@ -14,6 +14,8 @@
 - `package.json`：`author` 换成 `大肥鱼 (aechoa215) <yawenpeng0831@gmail.com>`，
   补齐 `repository` / `homepage` / `bugs` 指向 `github.com/aechoa215/cortico-world-workbuddy`。
 - README「卸载与还原」补充自动还原行为；配置表加 `hostInject`。
+- 启动瞬间不再误报：`start()` 未跑完之前，四盏灯里的登录态显示「正在读取登录态…」而不是
+  「未发现登录态」——此前 Core 刚起来时抢读会看到约一秒的假 offline。
 - 提交身份与发布元数据统一：`author.email` 与 git 全局身份都指向 Git 账号绑定的
   `yawenpeng0831@gmail.com`（此前是 `799713644@qq.com`，两处不一致会让 npm 元数据与提交记录对不上）。
 - `LICENSE` 版权主体由占位写法 `cortico-world-workbuddy contributors` 改为 `aechoa215`。
