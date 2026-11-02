@@ -77,7 +77,14 @@ var TEXT = {
     noData: "\u6682\u65E0\u6570\u636E",
     totalCredit: "\u5408\u8BA1\u79EF\u5206",
     todayCredit: "\u4ECA\u65E5\u79EF\u5206",
-    todayTokens: "\u4ECA\u65E5 token"
+    todayTokens: "\u4ECA\u65E5 token",
+    colSafety: "\u5408\u89C4",
+    safetySafe: "\u5B89\u5168\u6E05\u5355",
+    safetyCaution: "\u5B89\u5168\u6E05\u5355\xB7\u8C28\u614E",
+    showAllModels: "\u663E\u793A\u5168\u90E8\u6A21\u578B\uFF08\u542B\u4E0D\u5EFA\u8BAE\u9879\uFF09",
+    unsafePick: "\u8BE5\u6A21\u578B\u4E0D\u5728\u5B89\u5168\u6E05\u5355\u5185\uFF0C\u5DF2\u62D2\u7EDD\u9009\u62E9",
+    safeOnlyOn: "\u4EC5\u8C03\u7528\u5B89\u5168\u6E05\u5355\u6A21\u578B",
+    safeOnlyOff: "safeOnly \u5DF2\u5173\u95ED\uFF1A\u5168\u90E8\u6A21\u578B\u53EF\u8C03\u7528\uFF08\u542B WorkBuddy \u4E0D\u5EFA\u8BAE\u5916\u90E8\u8C03\u7528\u7684\u9879\uFF09"
   },
   en: {
     refresh: "Refresh from WorkBuddy",
@@ -156,7 +163,14 @@ var TEXT = {
     noData: "No data",
     totalCredit: "Total credits",
     todayCredit: "Credits today",
-    todayTokens: "Tokens today"
+    todayTokens: "Tokens today",
+    colSafety: "Policy",
+    safetySafe: "Safe list",
+    safetyCaution: "Safe list \xB7 caution",
+    showAllModels: "Show all models (including discouraged ones)",
+    unsafePick: "This model is outside the safe list and cannot be selected",
+    safeOnlyOn: "Safe-list only",
+    safeOnlyOff: "safeOnly is off: every model is callable (including ones WorkBuddy discourages)"
   }
 };
 function strings(ctx) {
@@ -190,33 +204,42 @@ function mountModels(ctx) {
   const { ui } = ctx;
   const sheet = ui.sheet({
     title: s.colModel === "\u6A21\u578B" ? "WorkBuddy \u6A21\u578B\u76EE\u5F55" : "WorkBuddy model catalog",
-    desc: s.empty
+    desc: s.colModel === "\u6A21\u578B" ? "\u9ED8\u8BA4\u53EA\u5217 WorkBuddy \u516C\u5F00\u5BF9\u8BDD\u6A21\u578B\uFF08\u5B89\u5168\u6E05\u5355\uFF09\uFF1B\u52FE\u9009\u300C\u663E\u793A\u5168\u90E8\u6A21\u578B\u300D\u53EF\u67E5\u770B\u88AB\u6392\u9664\u9879\u53CA\u5176\u7406\u7531\u3002" : 'Only WorkBuddy public chat models are listed by default; tick "Show all models" to see excluded ones and why.'
   });
   ctx.root.append(sheet.el);
   const head = ui.rowbar();
   const refreshBtn = ui.button(s.refresh, { variant: "primary" });
   const stateChip = ui.chip("", "plain");
   const currentChip = ui.chip("", "accent");
-  head.append(refreshBtn, stateChip, currentChip);
+  const allBox = ui.checkbox(s.showAllModels, { checked: false });
+  head.append(refreshBtn, stateChip, currentChip, allBox.el);
   sheet.body.append(head);
   const errLine = ui.msgline();
   sheet.body.append(errLine);
   const table = ui.table({
-    head: [s.colModel, s.colMultiplier, s.colContext, s.colReasoning, s.colAction],
+    head: [s.colModel, s.colSafety, s.colMultiplier, s.colContext, s.colReasoning, s.colAction],
     maxHeight: "calc(100vh - 320px)"
   });
   sheet.body.append(table.el);
   let state = null;
   function renderChips() {
-    stateChip.textContent = `${s.lastRefresh}: ${fmtTs(state?.catalogAt, s)} \xB7 ${state?.models?.length ?? 0} ${s.models}`;
+    const models = state?.models ?? [];
+    const safeCount = models.filter((m) => m.safety?.allow).length;
+    stateChip.textContent = `${s.lastRefresh}: ${fmtTs(state?.catalogAt, s)} \xB7 ${safeCount}/${models.length} ${s.models} \xB7 ${state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn}`;
     currentChip.textContent = `${s.currentModel}: ${state?.model || "\u2014"}`;
   }
+  function pickable(m) {
+    if (state?.safeOnly === false) return true;
+    return m.safety?.allow !== false;
+  }
   function renderTable() {
-    const models = state?.models ?? [];
+    const all = state?.models ?? [];
+    const models = allBox.checked ? all : all.filter((m) => m.safety?.allow);
     table.clear(models.length ? void 0 : s.empty);
     for (const m of models) {
       const mul = fmtMultiplier(m, s);
       const isCurrent = state.model === m.id;
+      const safety = m.safety ?? {};
       const nameCell = ui.h("div");
       nameCell.append(ui.h("div", null, m.name || m.id));
       const sub = ui.h("div", "dim", m.id);
@@ -224,12 +247,26 @@ function mountModels(ctx) {
       sub.style.opacity = "0.65";
       nameCell.append(sub);
       if (m.description) nameCell.title = m.description;
+      const safePill = ui.pill(
+        safety.label ?? "\u2014",
+        safety.allow ? safety.caution ? "plain" : "on" : "plain"
+      );
+      if (safety.reason) safePill.title = safety.reason;
+      if (!safety.allow) {
+        safePill.style.opacity = "0.6";
+        nameCell.style.opacity = "0.6";
+      }
       const mulPill = ui.pill(mul.text, mul.free ? "on" : "plain");
       if (mul.promo) mulPill.title = mul.promo;
+      const allowed = pickable(m);
       const btn = ui.button(isCurrent ? s.selected : s.select, {
         size: "sm",
         variant: isCurrent ? "plain" : "primary",
         onClick: async () => {
+          if (!allowed) {
+            ui.toast(`${s.unsafePick}${safety.reason ? `\uFF1A${safety.reason}` : ""}`, "bad");
+            return;
+          }
           const off = ui.disable(btn);
           try {
             const r = await ctx.invoke("select", [m.id]);
@@ -249,8 +286,13 @@ function mountModels(ctx) {
         }
       });
       if (isCurrent) btn.disabled = true;
+      if (!allowed) {
+        btn.disabled = true;
+        btn.title = safety.reason ?? "";
+      }
       table.addRow([
         nameCell,
+        safePill,
         mulPill,
         m.contextWindow ? String(m.contextWindow) : "\u2014",
         m.reasoning?.supportedEfforts?.join(" / ") ?? "\u2014",
@@ -258,6 +300,10 @@ function mountModels(ctx) {
       ]);
     }
   }
+  allBox.input.addEventListener("change", () => {
+    renderChips();
+    renderTable();
+  });
   async function load() {
     state = await ctx.invoke("state");
     renderChips();

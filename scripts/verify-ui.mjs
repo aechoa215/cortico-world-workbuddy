@@ -356,6 +356,23 @@ for (let run = 1; run <= RUNS; run += 1) {
     row.checks.usageRows = usage.rows;
     row.checks.usageChip = usage.chip;
     if (SHOTS && run === 1) { await sleep(300); await shot('world-usage'); }
+    // --- 模型目录：合规列 + 默认只列安全清单 ---
+    await evaluate(clickByText('模型目录'));
+    const modelsView = await waitFor('模型目录渲染', async () => {
+      const v = await evaluate(`(() => {
+        const th = [...document.querySelectorAll('th')].map((n) => n.textContent.trim());
+        const rows = document.querySelectorAll('table tr').length;
+        const safePills = [...document.querySelectorAll('td span')].filter((n) => /安全清单/.test(n.textContent || '')).length;
+        const allBox = [...document.querySelectorAll('input[type="checkbox"]')].length;
+        return { hasPolicy: th.includes('合规'), headers: th.join('|'), rows, safePills, checkboxes: allBox };
+      })()`);
+      return v.hasPolicy && v.rows > 10 ? v : false;
+    });
+    row.checks.modelsPolicyColumn = modelsView.hasPolicy;
+    row.checks.modelsRows = modelsView.rows;
+    row.checks.modelsSafePills = modelsView.safePills;
+    row.checks.modelsHasShowAll = modelsView.checkboxes >= 1;
+    if (SHOTS && run === 1) { await sleep(300); await shot('world-models'); }
     if (KEEP) await shot(`run${run}-world`);
     void pane;
   } catch (err) {

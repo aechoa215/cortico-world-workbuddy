@@ -12,6 +12,7 @@ import { discoverCredentials, maskToken, resolveTokensWithKey } from './credenti
 import { detectWorkBuddy } from './wbproc.js';
 import { attachPromos, dailyWindowText, discountText, priceViewOf, promoActiveAt } from './promo.js';
 import { UsageLedger, summarize } from './usage.js';
+import { DEFAULT_SAFE_MODEL, SAFE_MODEL_IDS, classifyModel, preferredSafeModel, safeGroupsOf } from './safety.js';
 import { backupPathOf, describeHostInjection, ensureHostInjection, findAppRoot, inspectHostInjection, removeHostInjection } from './host.js';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -53,9 +54,15 @@ export const WB_TOOL_DECLS = [
   {
     name: 'wb_list_models',
     description:
-      'List the WorkBuddy models available to the signed-in account, each with its default credit multiplier (e.g. x0.79), context window and reasoning efforts. Read-only; costs nothing.',
+      'List the WorkBuddy chat models that are safe to call (official public catalog only), each with its credit multiplier (e.g. x0.79, already including time-limited discounts), context window and reasoning efforts. Read-only; costs nothing. Pass all=true to also list models that are disabled, internal routing aliases, media/code models or delisted ones — those are not callable through this bridge while worlds.workbuddy.safeOnly is on.',
     tags: ['read'],
-    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        all: { type: 'boolean', description: 'Also list models outside the safe list (shown with their risk reason).' },
+      },
+    },
   },
   {
     name: 'wb_select_model',
@@ -435,6 +442,37 @@ export class WorkBuddyWorld {
   }
 
   // -------------------------------------------------------------------------
+  // 合规闸门：只放行 WorkBuddy 公开对话模型
+  // -------------------------------------------------------------------------
+
+  /** 目录里哪些模型进了安全清单（按目录顺序）。 */
+  safeModelIds() {
+    return this.catalog.filter((m) => classifyModel(m.id, m).allow).map((m) => m.id);
+  }
+
+  /** 单个模型的合规判定。 */
+  safetyOf(id) {
+    return classifyModel(id, this.findModel(id));
+  }
+
+  /** 把模型的合规判定挂进 models/state 的返回，供面板渲染。 */
+  describeModel(m) {
+    const safety = classifyModel(m.id, m);
+    return { ...m, safety, price: priceViewOf(m, Date.now()) };
+  }
+
+  /**
+   * wb_chat / wb_select_model 的准入检查。
+   * @returns {string|null} 拒绝时返回给模型看的说明，放行时 null。
+   */
+  rejectUnsafeModel(id) {
+    const safety = this.safetyOf(id);
+    if (safety.allow || this.cfg.safeOnly === false) return null;
+    const hint = '（workbuddy.safeOnly 已开；如确需使用，可在 World 配置里关掉它，风险自负）';
+    return `模型 ${id} 不在 WorkBuddy 安全清单内，判定为「${safety.label}」：${safety.reason}。${hint}`;
+  }
+
+  // -------------------------------------------------------------------------
   // World 契约
   // -------------------------------------------------------------------------
 
@@ -454,6 +492,7 @@ export class WorkBuddyWorld {
       'workbuddy.authed': this.tokens ? 'yes' : 'no',
       'workbuddy.priority': this.preferOn ? 'on' : 'off',
       'workbuddy.process': this.proc.running ? 'running' : 'stopped',
+      'workbuddy.safeOnly': this.cfg.safeOnly === false ? 'off' : 'on',
       'workbuddy.todayCredit': String(Math.round(this.today.credit * 100) / 100),
       'workbuddy.todayTokens': String(this.today.prompt + this.today.completion),
     };
@@ -463,7 +502,7 @@ export class WorkBuddyWorld {
     return [
       {
         ...WB_TOOL_DECLS[0],
-        handler: async () => this.toolListModels(),
+        handler: async (args) => this.toolListModels({ all: args?.all === true }),
       },
       {
         ...WB_TOOL_DECLS[1],
@@ -581,10 +620,12 @@ export class WorkBuddyWorld {
   // 工具实现（回执只陈述可确认的事实）
   // -------------------------------------------------------------------------
 
-  toolListModels() {
+  toolListModels({ all = false } = {}) {
     if (this.catalog.length === 0) return `WorkBuddy 模型目录为空。${this.lastError || '请先在面板刷新目录。'}`;
     const now = Date.now();
-    const lines = this.catalog.map((m) => {
+    const safeOnly = this.cfg.safeOnly !== false;
+
+    const describe = (m) => {
       const parts = [`- ${m.id}`];
       if (m.name !== m.id) parts.push(`(${m.name})`);
       const price = priceViewOf(m, now);
@@ -602,10 +643,24 @@ export class WorkBuddyWorld {
       if (m.reasoning?.supportedEfforts) parts.push(`推理档 ${m.reasoning.supportedEfforts.join('/')}`);
       if (m.supportsImages) parts.push('支持图片输入');
       return parts.join('，');
+    };
+
+    const safeModels = this.catalog.filter((m) => classifyModel(m.id, m).allow);
+    const otherModels = this.catalog.filter((m) => !classifyModel(m.id, m).allow);
+
+    const groups = safeGroupsOf(safeModels.map((m) => m.id));
+    const groupBlocks = groups.map((g) => {
+      const rows = g.ids.map((id) => describe(this.findModel(id))).filter(Boolean);
+      return `【${g.label}】\n${rows.join('\n')}`;
     });
+
     const current = this.cfg.model
       ? `当前选择：${this.cfg.model}（此刻 ${this.selectedMultiplier() ?? '倍率未知'}）\n`
       : '当前未选择模型。\n';
+    const policy = safeOnly
+      ? `安全清单：${safeModels.length}/${this.catalog.length} 个模型可调用（WorkBuddy 公开目录里的对话模型；wb_list_models 传 all=true 可看其余项及原因）。\n`
+      : `注意：safeOnly 已关闭，${this.catalog.length} 个模型全部可调用——其中含 disabled/别名/媒体等 WorkBuddy 不建议外部调用的项。\n`;
+
     const promoLines = this.promos
       .filter((p) => Array.isArray(p.modelIds) && p.modelIds.length > 0)
       .map((p) => {
@@ -616,12 +671,28 @@ export class WorkBuddyWorld {
         return `- ${p.id}：${discountText(p)}${when ? `，${when}` : ''}，影响 ${p.modelIds.join('/')}（${flag}）`;
       });
     const promoBlock = promoLines.length > 0 ? `\n限时优惠：\n${promoLines.join('\n')}` : '';
-    return current + lines.join('\n') + promoBlock;
+
+    if (!all) {
+      const body = groupBlocks.length > 0 ? groupBlocks.join('\n') : '（安全清单里的模型当前都不在目录中，先刷新目录。）';
+      return `${current}${policy}\n${body}${promoBlock}`;
+    }
+
+    const otherRows = otherModels.map((m) => {
+      const safety = classifyModel(m.id, m);
+      return `- ${m.id}：${safety.label}——${safety.reason}`;
+    });
+    const otherBlock =
+      otherRows.length > 0
+        ? `\n\n其余 ${otherRows.length} 个模型（不建议通过外部软件调用${safeOnly ? '，当前会被拒绝' : '，但 safeOnly 已关闭'}）：\n${otherRows.join('\n')}`
+        : '';
+    return `${current}${policy}\n${groupBlocks.join('\n')}${otherBlock}${promoBlock}`;
   }
 
   async toolSelectModel(id) {
     const model = this.findModel(id);
     if (!model) return { text: `目录里没有模型「${id}」。先用 wb_list_models 看可用 id。`, failed: true };
+    const reject = this.rejectUnsafeModel(id);
+    if (reject) return { text: reject, failed: true };
     this.cfg.model = id;
     // 框架的 ctx.persist(patch) 必须带 patch；只写本 World 段内的字段。
     this.ctx.persist({ model: id });
@@ -644,7 +715,15 @@ export class WorkBuddyWorld {
       return { text: '未检测到 WorkBuddy 主进程：请先启动 WorkBuddy 桌面端再试。', failed: true };
     }
     const useId = model || this.cfg.model;
-    if (!useId) return { text: '尚未选择模型；先 wb_list_models 再 wb_select_model。', failed: true };
+    if (!useId) {
+      const suggestion = preferredSafeModel(this.safeModelIds());
+      return {
+        text: `尚未选择模型；先 wb_list_models 再 wb_select_model（建议 ${suggestion}）。`,
+        failed: true,
+      };
+    }
+    const reject = this.rejectUnsafeModel(useId);
+    if (reject) return { text: reject, failed: true };
     const tokens = await this.ensureTokens();
     if (!tokens) return { text: '未发现 WorkBuddy 登录态，无法调用。', failed: true };
     const messages = [];
@@ -837,6 +916,7 @@ export class WorkBuddyWorld {
             { name: 'workbuddy.authed', description: '是否已有可用登录态。' },
             { name: 'workbuddy.priority', description: '「中转站优先」开关：on / off。' },
             { name: 'workbuddy.process', description: 'WorkBuddy 主进程状态：running / stopped。' },
+            { name: 'workbuddy.safeOnly', description: '安全清单闸门：on（只放行公开对话模型）/ off。' },
             { name: 'workbuddy.todayCredit', description: '今日已消耗积分（本地记账）。' },
             { name: 'workbuddy.todayTokens', description: '今日 token 用量（本地记账）。' },
           ],
@@ -1034,7 +1114,8 @@ export class WorkBuddyWorld {
         model: this.cfg.model,
         catalogAt: this.catalogAt,
         lastError: this.lastError,
-        models: this.catalog.map((m) => ({ ...m, price: priceViewOf(m, Date.now()) })),
+        safeOnly: this.cfg.safeOnly !== false,
+        models: this.catalog.map((m) => this.describeModel(m)),
         prefer: this.preferOn,
         running: !!this.proc.running,
         mainPid: this.proc.mainPid,
@@ -1053,6 +1134,8 @@ export class WorkBuddyWorld {
       const id = String(args[0] ?? '');
       const found = this.findModel(id);
       if (!found) return { ok: false, error: `unknown model: ${id}` };
+      const reject = this.rejectUnsafeModel(id);
+      if (reject) return { ok: false, error: reject, unsafe: true };
       this.cfg.model = id;
       this.ctx.persist({ model: id });
       return { ok: true, model: id, multiplier: found.creditMultiplier ?? null };

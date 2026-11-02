@@ -1,5 +1,27 @@
 # 更新日志
 
+## 0.1.7
+
+按 WorkBuddy 官方对话给出的合规口径，给桥接加「安全清单」闸门（仍只在本机，未推送 / 未发布）。
+
+- **新增 `src/safety.js`**：把 WorkBuddy 的筛选原则固化成 `SAFE_MODEL_IDS`（21 个公开对话模型）、
+  分组表 `SAFE_MODEL_GROUPS`、谨慎档 `CAUTION_MODEL_IDS`（hy3 系列与 preview）与 `classifyModel()`。
+  `classifyModel` 把目录里每个模型判成 `safe / caution / alias / disabled / media / code / retired /
+  format / experimental / unknown` 十档，附中文理由；`allow` 只对前两档为真。
+- **闸门默认开启**（`worlds.workbuddy.safeOnly = true`）：`wb_chat`、`wb_select_model` 与面板的
+  「使用」按钮都会拒绝安全清单外的模型，并给出「判定档位 + 理由 + 如何解除」的说明；
+  关掉这个配置才能调用 disabled / 内部别名 / 预览等模型，风险自负。
+- **`wb_list_models` 默认只列安全清单**（按 DeepSeek / GLM / 混元 / Kimi / 其他分组，带此刻倍率），
+  传 `all=true` 才追加其余模型及其排除理由。
+- **被排除的典型项**：`wb-lite`（目录 `disabled:true`）、`auto` / `fast-model` / `balanced-model` /
+  `deep-model`（内部路由别名）、`hunyuan-image-alpha*` / `kling-video-v3` / `minimax-video-h3`（媒体）、
+  `codewise-*`（代码补全）、`hy4-preview*`（实验预览）、19 个已下架（11102）、`glm-5.0-turbo`（11150）。
+- **模型目录面板**新增「合规」列（安全清单 / 安全清单·谨慎 / 各排除档位，悬停看理由），
+  默认只显示安全清单，勾选「显示全部模型（含不建议项）」才展开；不安全项的选择按钮置灰。
+- `envPromptVars()` 增加 `workbuddy.safeOnly`；`ENV_PROMPT.md` 增加一条：闸门开着时不要绕过拒绝，
+  应该告诉用户原因并改推荐安全清单里的模型。
+- `describe.json` 的 `envPrompt` 与 `wb_list_models` 描述同步（多了 `all` 参数）。
+
 ## 0.1.6
 
 新增「用量」面板与真实的时段优惠计算（只在本机验证，未发布）。
@@ -22,7 +44,6 @@
 - `wb_list_models` 标注此刻生效倍率（含原价对比、时段）与优惠徽标；`wb_select_model` 提示此刻倍率。
 - 环境提示词新增 `{{workbuddy.todayCredit}}` / `{{workbuddy.todayTokens}}`，并在倍率旁说明已含生效中的限时优惠。
 - 详情页徽标增加「今日积分」。
-- 仓库补 `package-lock.json`（锁定 esbuild 0.24.2），CI 改为 `npm ci`：`dist` 的构建产物必须逐字节稳定，否则「dist 未同步」的检查会误报。
 
 ## 0.1.5
 

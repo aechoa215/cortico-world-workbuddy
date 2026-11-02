@@ -2,10 +2,10 @@
   "tools": [
     {
       "name": "wb_list_models",
-      "description": "List the WorkBuddy models available to the signed-in account, each with its default credit multiplier (e.g. x0.79), context window and reasoning efforts. Read-only; costs nothing.",
+      "description": "List the WorkBuddy chat models that are safe to call (official public catalog only), each with its credit multiplier (e.g. x0.79, already including time-limited discounts), context window and reasoning efforts. Read-only; costs nothing. Pass all=true to also list models that are disabled, internal routing aliases, media/code models or delisted ones — those are not callable through this bridge while worlds.workbuddy.safeOnly is on.",
       "summary": {
-        "zh": "列出本机 WorkBuddy 账号可用的模型及各自的默认积分倍率。",
-        "en": "Lists WorkBuddy models for the signed-in account with each default credit multiplier."
+        "zh": "列出 WorkBuddy 公开对话模型（安全清单）及各自的积分倍率、上下文与推理档；all=true 时附上被排除的项与原因。",
+        "en": "Lists the safe WorkBuddy chat models with multiplier, context and reasoning efforts; all=true also lists excluded ones with reasons."
       },
       "tags": [
         "read"
@@ -13,12 +13,17 @@
       "parameters": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Also list models outside the safe list (shown with their risk reason)."
+          }
+        }
       }
     },
     {
       "name": "wb_select_model",
-      "description": "Select which WorkBuddy model wb_chat should use by default. The id must come from wb_list_models. Persists across restarts.",
+      "description": "Select which WorkBuddy model wb_chat should use by default. The id must come from wb_list_models. Refused when worlds.workbuddy.safeOnly is on and the model is outside the safe list. Persists across restarts.",
       "summary": {
         "zh": "选择 wb_chat 默认调用的 WorkBuddy 模型。",
         "en": "Selects the default WorkBuddy model for wb_chat."
@@ -98,5 +103,5 @@
       }
     }
   ],
-  "envPrompt": "## WorkBuddy bridge\n\nThis machine has a WorkBuddy desktop sign-in bridged in (region: {{workbuddy.region}}; signed in: {{workbuddy.authed}}).\nThe model catalog holds {{workbuddy.catalogSize}} models. The currently selected model is `{{workbuddy.model}}` with default credit multiplier {{workbuddy.multiplier}}.\nWorkBuddy desktop main process: {{workbuddy.process}}. Relay-first switch: {{workbuddy.priority}}.\nSpent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.todayTokens}} tokens (locally recorded).\nThe multiplier above already includes any time-limited discount or free window that is active right now; `wb_list_models` also marks which offers are active and their hours.\n\n- Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.\n- Use `wb_select_model` when the user asks to switch the WorkBuddy model.\n- `wb_chat` only works while the WorkBuddy desktop main process is running; otherwise it returns「未检测到 WorkBuddy 主进程」. Every call spends the user's own credits at that model's multiplier.\n- `wb_credits` is read-only and costs nothing (also requires the desktop process).\n\n### Relay first: {{workbuddy.priority}}\n\n- Switch `on` **and** process `running`: every user turn that expects a conversational answer (question, chat, writing, reasoning, rewrite, translation, summary) must be answered by a WorkBuddy model first — call `wb_chat` (omit `model` to use `{{workbuddy.model}}`), then speak the returned answer back in your own voice and name the model that answered. Only fall back to your own model if the call fails.\n- Switch `off` (default): do not call `wb_chat`; answer with your own model. If the user explicitly asks for WorkBuddy, `wb_chat` is still allowed — the desktop process must be running.\n- Tool errors and empty answers are not a reason to flip the switch; just say what happened.\n"
+  "envPrompt": "## WorkBuddy bridge\n\nThis machine has a WorkBuddy desktop sign-in bridged in (region: {{workbuddy.region}}; signed in: {{workbuddy.authed}}).\nThe model catalog holds {{workbuddy.catalogSize}} models. The currently selected model is `{{workbuddy.model}}` with default credit multiplier {{workbuddy.multiplier}}.\nWorkBuddy desktop main process: {{workbuddy.process}}. Relay-first switch: {{workbuddy.priority}}.\nSpent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.todayTokens}} tokens (locally recorded).\nThe multiplier above already includes any time-limited discount or free window that is active right now; `wb_list_models` also marks which offers are active and their hours.\n\n- Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.\n- Safe-list gate: {{workbuddy.safeOnly}}. When it is `on`, only the models WorkBuddy publishes as public chat models are callable — `disabled` entries, internal routing aliases (`auto`, `fast-model`, `balanced-model`, `deep-model`), media/code models and delisted ones are refused. Do not try to work around a refusal; tell the user why and offer a safe model instead. `wb_list_models` with `all=true` shows the refused ones with reasons.\n- Use `wb_select_model` when the user asks to switch the WorkBuddy model.\n- `wb_chat` only works while the WorkBuddy desktop main process is running; otherwise it returns「未检测到 WorkBuddy 主进程」. Every call spends the user's own credits at that model's multiplier.\n- `wb_credits` is read-only and costs nothing (also requires the desktop process).\n\n### Relay first: {{workbuddy.priority}}\n\n- Switch `on` **and** process `running`: every user turn that expects a conversational answer (question, chat, writing, reasoning, rewrite, translation, summary) must be answered by a WorkBuddy model first — call `wb_chat` (omit `model` to use `{{workbuddy.model}}`), then speak the returned answer back in your own voice and name the model that answered. Only fall back to your own model if the call fails.\n- Switch `off` (default): do not call `wb_chat`; answer with your own model. If the user explicitly asks for WorkBuddy, `wb_chat` is still allowed — the desktop process must be running.\n- Tool errors and empty answers are not a reason to flip the switch; just say what happened.\n"
 }

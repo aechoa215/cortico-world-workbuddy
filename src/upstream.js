@@ -401,6 +401,8 @@ function normalizeModel(m) {
     supportsToolCall: m.supportsToolCall === true || m.supports_tool_call === true,
     description: str(m.descriptionZh ?? m.description ?? m.descriptionEn),
     reasoning: parseReasoning(m.reasoning),
+    /** 目录里标了 disabled=true 的模型：调用它们等于绕过官方限制，安全清单直接拒。 */
+    disabled: m.disabled === true,
   };
   return out;
 }

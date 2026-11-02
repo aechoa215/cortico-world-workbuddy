@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-workbuddy",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "把 Windows 端已登录的 WorkBuddy 客户端模型桥接进 Coopanion：读取本机登录态，列出模型目录与默认积分倍率，供 Coo 调用。",
   "license": "MIT",

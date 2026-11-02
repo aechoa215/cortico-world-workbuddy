@@ -7,6 +7,7 @@ Spent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.
 The multiplier above already includes any time-limited discount or free window that is active right now; `wb_list_models` also marks which offers are active and their hours.
 
 - Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.
+- Safe-list gate: {{workbuddy.safeOnly}}. When it is `on`, only the models WorkBuddy publishes as public chat models are callable — `disabled` entries, internal routing aliases (`auto`, `fast-model`, `balanced-model`, `deep-model`), media/code models and delisted ones are refused. Do not try to work around a refusal; tell the user why and offer a safe model instead. `wb_list_models` with `all=true` shows the refused ones with reasons.
 - Use `wb_select_model` when the user asks to switch the WorkBuddy model.
 - `wb_chat` only works while the WorkBuddy desktop main process is running; otherwise it returns「未检测到 WorkBuddy 主进程」. Every call spends the user's own credits at that model's multiplier.
 - `wb_credits` is read-only and costs nothing (also requires the desktop process).

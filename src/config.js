@@ -29,6 +29,12 @@ export const WB_DEFAULTS = {
   prefer: false,
   /** 是否允许改写宿主控制台 index.html 注入「中转站优先」按钮；关闭后不注入也不还原。 */
   hostInject: true,
+  /**
+   * 只允许调用 WorkBuddy 公开对话模型（安全清单）。
+   * 关掉后能用 disabled / 内部别名 / 预览等模型，但那属于「已知会违反对方使用建议」的操作，
+   * 默认必须是 true。
+   */
+  safeOnly: true,
 };
 
 /** World 配置组（WebUI 通用渲染的旋钮）。模型选择走自定义面板，不在这里。 */
@@ -82,6 +88,13 @@ export const WB_CONFIG_GROUP = {
         type: 'boolean',
         title: '主界面按钮注入',
         description: '在「开始」页加一个「中转站优先」按钮（会改写 Coopanion 的 build/console/index.html，停用或卸载时自动还原）。关掉后只能用 World 详情页的开关。',
+        'x-hot': true,
+      },
+      'worlds.workbuddy.safeOnly': {
+        type: 'boolean',
+        title: '只调用安全清单模型',
+        description:
+          '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 公开目录里的对话模型（21 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉可绕过限制，但那属于违反对方使用建议的操作，风险自负。',
         'x-hot': true,
       },
     },
