@@ -55,6 +55,11 @@ jobs:
       - name: Extension selfcheck
         run: node scripts/selfcheck.mjs --allow-missing-host
 
+      # 契约检查：describe.json 与源码一致、版本号与 CHANGELOG 对齐、促销/安全清单/账本断言。
+      # 这一条不依赖宿主，CI 上跑；以前 selfcheck 在缺宿主时直接 exit 0，等于没检查。
+      - name: Contract checks
+        run: node scripts/contract.mjs
+
   # Linux 上只做「不安装依赖也能跑」的检查：语法 + 契约自检（无宿主时跳过）。
   # 这样跨平台的问题（大小写、换行、路径分隔符）仍然能被发现。
   cross-platform:

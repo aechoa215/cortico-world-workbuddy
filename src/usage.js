@@ -33,6 +33,33 @@ export class UsageLedger {
   constructor(opts) {
     this.dir = opts.dataDir;
     this.log = opts.log ?? { warn: () => {} };
+    /**
+     * 写操作队列。
+     *
+     * append() 是「追加」、prune()/clear() 是「整文件重写」。两者并发时，重写会把
+     * 刚追加进去的那行覆盖掉。这里把三种写操作串成一条链，读操作不排队（读到的
+     * 是最近一次落盘的内容即可）。
+     * @type {Promise<unknown>}
+     */
+    this._queue = Promise.resolve();
+  }
+
+  /** 串行执行一次写操作；前一次失败不影响后一次。 */
+  _withLock(fn) {
+    const run = this._queue.then(fn, fn);
+    this._queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** 原子替换账本文件（先写临时文件再 rename，进程中途被杀也不会留下半个文件）。 */
+  async _replace(text) {
+    await mkdir(this.dir, { recursive: true });
+    const tmp = `${this.path}.${process.pid}.tmp`;
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, this.path);
   }
 
   get path() {
@@ -73,8 +100,10 @@ export class UsageLedger {
       ...num('durationMs', entry.durationMs),
     };
     try {
-      await mkdir(this.dir, { recursive: true });
-      await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
+      await this._withLock(async () => {
+        await mkdir(this.dir, { recursive: true });
+        await appendFile(this.path, `${JSON.stringify(record)}\n`, 'utf8');
+      });
     } catch (err) {
       this.log.warn?.(`写用量账本失败：${err?.message ?? err}`);
     }
@@ -106,8 +135,7 @@ export class UsageLedger {
   /** 清空账本（面板上的「清空」按钮）。 */
   async clear() {
     try {
-      await mkdir(this.dir, { recursive: true });
-      await writeFile(this.path, '', 'utf8');
+      await this._withLock(() => this._replace(''));
       return true;
     } catch (err) {
       this.log.warn?.(`清空用量账本失败：${err?.message ?? err}`);
@@ -119,22 +147,24 @@ export class UsageLedger {
   async prune(nowMs = Date.now()) {
     const cutoff = nowMs - RETENTION_DAYS * 864e5;
     try {
-      const text = await readFile(this.path, 'utf8');
-      const kept = text
-        .split('\n')
-        .filter((line) => {
-          if (line.trim() === '') return false;
-          try {
-            const rec = JSON.parse(line);
-            return typeof rec?.ts === 'number' && rec.ts >= cutoff;
-          } catch {
-            return false;
-          }
-        })
-        .join('\n');
-      const next = kept === '' ? '' : `${kept}\n`;
-      await writeFile(this.path, next, 'utf8');
-      return true;
+      return await this._withLock(async () => {
+        const text = await readFile(this.path, 'utf8');
+        const kept = text
+          .split('\n')
+          .filter((line) => {
+            if (line.trim() === '') return false;
+            try {
+              const rec = JSON.parse(line);
+              return typeof rec?.ts === 'number' && rec.ts >= cutoff;
+            } catch {
+              return false;
+            }
+          })
+          .join('\n');
+        const next = kept === '' ? '' : `${kept}\n`;
+        await this._replace(next);
+        return true;
+      });
     } catch (err) {
       if (err?.code !== 'ENOENT') this.log.warn?.(`裁剪账本失败：${err?.message ?? err}`);
       return false;
@@ -219,7 +249,10 @@ export function summarize(records, nowMs, opts = {}) {
 
   const modelRows = [...byModel.values()].sort((a, b) => b.credit - a.credit || b.total - a.total);
   const dayRows = [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1));
-  const recent = records.slice(-15).reverse().map((rec) => ({
+  const recent = [...records]
+    .sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0))
+    .slice(0, 15)
+    .map((rec) => ({
     ts: rec.ts,
     model: rec.model,
     ok: rec.ok !== false,
@@ -272,7 +305,7 @@ function startOfDay(ms) {
   return d.getTime();
 }
 
-function dayKey(ms) {
+export function dayKey(ms) {
   const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

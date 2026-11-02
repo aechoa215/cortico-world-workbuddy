@@ -89,8 +89,13 @@ async function probeWindows() {
 
 async function probePosix() {
   const r = await run('pgrep', ['-f', 'WorkBuddy']);
+  // pgrep 没匹配到进程时退出码是 1、stderr 为空；退出码非 1 或 stderr 提到「找不到命令」
+  // 才是工具缺失——以前把它当成「没有在跑」还会被缓存，导致 macOS/Linux 上永远显示离线。
+  const missingTool = /command not found|not found|ENOENT/i.test(r.stderr) || r.code === 127;
+  if (missingTool) {
+    return { running: false, pids: [], mainPid: null, via: 'error', detail: r.stderr.trim() || 'pgrep 不可用' };
+  }
   if (!r.ok && !r.stdout.trim()) {
-    // pgrep 没匹配到进程时退出码是 1，这不是工具缺失。
     return { running: false, pids: [], mainPid: null, via: 'pgrep', detail: r.stderr.trim() };
   }
   const pids = r.stdout

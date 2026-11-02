@@ -36,19 +36,12 @@ var TEXT = {
     currentModel: "\u5F53\u524D\u6A21\u578B",
     priorityTitle: "\u4E2D\u8F6C\u7AD9\u4F18\u5148",
     priorityLabel: "\u662F\u5426\u542F\u7528Workbuddy",
-    priorityDesc: "\u4E0E\u300C\u5F00\u59CB\u300D\u9875\u7684\u300C\u4E2D\u8F6C\u7AD9\u4F18\u5148\u300D\u6309\u94AE\u662F\u540C\u4E00\u4EFD\u72B6\u6001\uFF1A\u6253\u5F00\u540E\u684C\u5BA0\u6BCF\u8F6E\u5BF9\u8BDD\u4F18\u5148\u8C03\u7528 WorkBuddy \u7684\u6A21\u578B\uFF0C\u5173\u95ED\u5219\u5B8C\u5168\u8DF3\u8FC7 WorkBuddy\u3002\u9700\u8981 WorkBuddy \u684C\u9762\u7AEF\u4E3B\u8FDB\u7A0B\u5728\u8FD0\u884C\u3002",
+    priorityDesc: "\u6253\u5F00\u540E\u684C\u5BA0\u6BCF\u8F6E\u5BF9\u8BDD\u4F18\u5148\u8C03\u7528 WorkBuddy \u7684\u6A21\u578B\uFF0C\u5173\u95ED\u5219\u5B8C\u5168\u8DF3\u8FC7 WorkBuddy\u3002\u9700\u8981 WorkBuddy \u684C\u9762\u7AEF\u4E3B\u8FDB\u7A0B\u5728\u8FD0\u884C\u3002",
     procRunning: "WorkBuddy \u4E3B\u8FDB\u7A0B\uFF1A\u8FD0\u884C\u4E2D",
     procStopped: "WorkBuddy \u4E3B\u8FDB\u7A0B\uFF1A\u672A\u68C0\u6D4B\u5230",
     noProcess: "\u672A\u68C0\u6D4B\u5230Workbuddy",
     enabledOn: "\u5DF2\u5F00\u542F\uFF1A\u684C\u5BA0\u4F18\u5148\u8D70 WorkBuddy \u6A21\u578B",
     enabledOff: "\u5DF2\u5173\u95ED\uFF1A\u684C\u5BA0\u8DF3\u8FC7 WorkBuddy",
-    hostOk: "\u5F00\u59CB\u9875\u6309\u94AE\uFF1A\u5DF2\u6CE8\u5165",
-    hostBroken: "\u5F00\u59CB\u9875\u6309\u94AE\uFF1A\u672A\u6CE8\u5165\uFF08\u5BBF\u4E3B\u5347\u7EA7\u53EF\u80FD\u8986\u76D6\u4E86\u63A7\u5236\u53F0\u6587\u4EF6\uFF09",
-    hostUnknown: "\u5F00\u59CB\u9875\u6309\u94AE\uFF1A\u72B6\u6001\u672A\u77E5",
-    repair: "\u91CD\u65B0\u6CE8\u5165\u5F00\u59CB\u9875\u6309\u94AE",
-    repairing: "\u6B63\u5728\u91CD\u65B0\u6CE8\u5165\u2026",
-    repaired: "\u5DF2\u4FEE\u590D\uFF0C\u91CD\u65B0\u6253\u5F00\u63A7\u5236\u53F0\u5373\u53EF\u770B\u5230\u6309\u94AE",
-    repairFail: "\u4FEE\u590D\u5931\u8D25",
     usageTitle: "\u7528\u91CF",
     usageDesc: "\u672C\u673A\u8BB0\u8D26\u7684\u8C03\u7528\u7528\u91CF\u4E0E WorkBuddy \u79EF\u5206\u5305\u4F59\u989D\u3002\u79EF\u5206\u53D6\u4E0A\u6E38\u6BCF\u6B21\u8C03\u7528\u56DE\u4F20\u7684\u771F\u5B9E\u6263\u8D39\uFF08\u53EF\u80FD\u4E3A 0\uFF09\uFF0C\u500D\u7387\u6309\u76EE\u5F55 + \u9650\u65F6\u4F18\u60E0\u5B9E\u65F6\u8BA1\u7B97\u3002",
     usageRefresh: "\u5237\u65B0\u4F59\u989D",
@@ -128,13 +121,6 @@ var TEXT = {
     noProcess: "Workbuddy not detected",
     enabledOn: "On: the pet asks WorkBuddy first",
     enabledOff: "Off: the pet skips WorkBuddy",
-    hostOk: "Home button: injected",
-    hostBroken: "Home button: not injected (a host update may have replaced the console files)",
-    hostUnknown: "Home button: unknown",
-    repair: "Re-inject the home button",
-    repairing: "Re-injecting\u2026",
-    repaired: "Fixed. Reopen the console to see the button",
-    repairFail: "Repair failed",
     usageTitle: "Usage",
     usageDesc: "Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.",
     usageRefresh: "Refresh balance",
@@ -435,40 +421,10 @@ function mountPriority(ctx) {
   const sheet = ui.sheet({ title: s.priorityTitle, desc: s.priorityDesc });
   ctx.root.append(sheet.el);
   const statusLine = ui.msgline();
-  const hostLine = ui.msgline();
-  const hostBar = ui.actions();
-  const repairBtn = ui.button(s.repair, {
-    size: "sm",
-    variant: "plain",
-    onClick: async () => {
-      repairBtn.disabled = true;
-      hostLine.textContent = s.repairing;
-      try {
-        const r = await ctx.invoke("repair");
-        hostLine.textContent = r?.ok ? s.repaired : `${s.repairFail}\uFF1A${r?.error ?? r?.hostUi?.reason ?? ""}`;
-        ui.toast(r?.ok ? s.repaired : s.repairFail, r?.ok ? "ok" : "bad");
-        await load();
-      } catch (err) {
-        hostLine.textContent = `${s.repairFail}\uFF1A${String(err?.message ?? err)}`;
-        ui.toast(s.repairFail, "bad");
-      } finally {
-        repairBtn.disabled = false;
-      }
-    }
-  });
-  hostBar.append(repairBtn);
   function apply(r) {
     if (!r) return;
     box.setChecked(r.prefer === true);
     statusLine.textContent = r.running ? s.procRunning : s.procStopped;
-    const host = r.hostUi;
-    if (!host) {
-      hostLine.textContent = s.hostUnknown;
-      hostBar.style.display = "none";
-      return;
-    }
-    hostLine.textContent = host.ok ? s.hostOk : `${s.hostBroken}\uFF08${host.label ?? host.reason}\uFF09`;
-    hostBar.style.display = host.ok ? "none" : "";
   }
   const box = ui.checkbox(s.priorityLabel, {
     checked: false,
@@ -490,7 +446,7 @@ function mountPriority(ctx) {
       }
     }
   });
-  sheet.body.append(box.el, statusLine, hostLine, hostBar);
+  sheet.body.append(box.el, statusLine);
   async function load() {
     apply(await ctx.invoke("state"));
   }
@@ -612,7 +568,9 @@ function mountUsage(ctx) {
       recentTable.addRow([
         when,
         r.model ?? "\u2014",
-        fmtNum(r.totalTokens ?? (r.promptTokens ?? 0) + (r.completionTokens ?? 0)),
+        // 账本里的字段名就是 total/prompt/completion（不是 totalTokens），
+        // 以前这里恒读出 0，最近调用表的 token 列一直是 0。
+        fmtNum(r.total ?? (r.prompt ?? 0) + (r.completion ?? 0)),
         r.ok === false ? "\u2014" : fmtNum(r.credit),
         typeof r.durationMs === "number" ? `${r.durationMs} ms` : "\u2014"
       ]);

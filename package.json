@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-workbuddy",
-  "version": "0.1.7",
+  "version": "0.3.0",
   "type": "module",
   "description": "把 Windows 端已登录的 WorkBuddy 客户端模型桥接进 Coopanion：读取本机登录态，列出模型目录与默认积分倍率，供 Coo 调用。",
   "license": "MIT",
@@ -49,16 +49,17 @@
     "CHANGELOG.md",
     "describe.json",
     "scripts",
+    "!scripts/visual",
     "LICENSE",
-    "SECURITY.md",
-    "ENV_PROMPT.md"
+    "SECURITY.md"
   ],
   "scripts": {
-    "build:web": "esbuild src/webui/client.js --bundle --format=esm --outfile=dist/webui.js",
+    "build:web": "node scripts/build-web.mjs",
     "selfcheck": "node scripts/selfcheck.mjs",
-    "host-inject": "node scripts/host-inject.mjs",
     "verify": "node scripts/verify-ui.mjs --runs 3",
-    "prepack": "npm run build:web"
+    "prepack": "node scripts/build-web.mjs --strict",
+    "gen:describe": "node scripts/gen-describe.mjs",
+    "contract": "node scripts/contract.mjs"
   },
   "author": {
     "name": "大肥鱼 (aechoa215)",

@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findAppRoot } from '../src/host.js';
+import { findAppRoot } from './lib/app-root.mjs';
 
 const args = process.argv.slice(2);
 const argOf = (name, fallback) => {
@@ -247,10 +247,10 @@ const clickByText = (text) => `(() => {
 })()`;
 
 const readHome = `(() => {
-  const b = document.querySelector('button[data-workbuddy-home-button="1"]');
-  return { hasRow: !!document.querySelector('[data-workbuddy-home="1"]'), hasButton: !!b,
-    on: b?.classList.contains('on') ?? null, aria: b?.getAttribute('aria-pressed') ?? null,
-    label: [...document.querySelectorAll('.home-pickervisor, .home-pickerlabel')].map((n) => n.textContent.trim()) };
+  // 0.3.0 起主页不再注入按钮：这里同时断言「开始页正常渲染」与「没有残留注入行」。
+  return { mounted: !!document.querySelector('.home .home-picker'),
+    injectedRow: !!document.querySelector('[data-workbuddy-home]'),
+    labels: [...document.querySelectorAll('.home-pickerlabel')].map((n) => n.textContent.trim()) };
 })()`;
 
 const readWorldPage = `(() => {
@@ -272,37 +272,16 @@ for (let run = 1; run <= RUNS; run += 1) {
   // 归零
   await panel('set', [false]);
 
-  // --- 开始页：路由挂载 + 注入行 ---
+  // --- 开始页：正常渲染，且确认 0.3.0 已不再注入任何按钮 ---
   await send('Page.navigate', { url: `${HOME}?t=${tag}` });
   try {
-    await waitFor('开始页 .home-picker', async () => evaluate(`!!document.querySelector('.home .home-picker')`));
+    const home = await waitFor('开始页 .home-picker', async () => {
+      const val = await evaluate(readHome);
+      return val.mounted ? val : false;
+    });
     row.checks.homeRoute = true;
-    const st = await waitFor('注入行 workbuddy 按钮', async () => {
-      const v = await evaluate(readHome);
-      return v.hasRow && v.hasButton ? v : false;
-    });
-    row.checks.homeButton = true;
-    row.checks.rowLabel = st.label.includes('中转站优先：');
-
-    // 点开
-    await evaluate(`document.querySelector('button[data-workbuddy-home-button="1"]').click()`);
-    const on = await waitFor('按钮高亮 + prefer=true', async () => {
-      const v = await evaluate(readHome);
-      const api = await panel('state', []);
-      return v.on === true && api.prefer === true ? { v, api } : false;
-    });
-    row.checks.toggleOn = true;
-    if (SHOTS && run === 1) await shot('home-on');
-    row.checks.model = on.api.model;
-
-    // 点关
-    await evaluate(`document.querySelector('button[data-workbuddy-home-button="1"]').click()`);
-    await waitFor('按钮熄灭 + prefer=false', async () => {
-      const v = await evaluate(readHome);
-      const api = await panel('state', []);
-      return v.on === false && api.prefer === false ? true : false;
-    });
-    row.checks.toggleOff = true;
+    row.checks.homeNoInjection = home.injectedRow === false;
+    row.checks.homeLabels = home.labels;
     if (KEEP) await shot(`run${run}-home`);
   } catch (err) {
     row.checks.homeError = String(err.message || err);

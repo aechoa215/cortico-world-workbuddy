@@ -34,7 +34,7 @@ jobs:
 
       # 零运行时依赖，devDependencies 只有 esbuild。
       - name: Install devDependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # dist 必须是源码的真实产物：发布出去的客户端不许是旧货。
       - name: Build webui and verify dist is up to date

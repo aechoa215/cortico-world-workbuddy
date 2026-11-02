@@ -1,5 +1,94 @@
 # 更新日志
 
+## 0.3.0
+
+**撤除主界面注入，并按复检报告修掉 9 处中优先级问题。**
+
+### 删掉的功能（以及随之消失的冗余）
+
+- 不再往 Coopanion 主界面「开始」页注入「中转站优先」按钮：删除 `src/host.js`、
+  `scripts/host-inject.mjs`、`assets/workbuddy-home.js`；`world.js` 去掉 `syncHostUi()`、
+  `hostInjectorSource()`、`removeHostUi()`、`hostUiLine()` 与 60 秒自检定时器。
+- 四盏灯回到三盏（WorkBuddy / 主进程 / 中转站优先），`hostInject` 配置项删除，
+  `priority` 面板不再有 `host` / `repair` 方法，面板里的「重新注入」按钮与相关文案一并移除。
+- 扩展现在**不改写宿主任何文件**，卸载不需要还原；装过 0.2.x 的机器按 README
+  的「旧版本残留」一段手工清一次 `build\console` 即可。
+
+### 按复检报告修复
+
+- `rediscover` 之后不再残留「已登出」哨兵：新增 `TOKEN_AUTO = 'wb-auto'`，探测成功即改写，
+  重启后不会又变回未登录。
+- `/v3/config` 返回 401/403 时直接判 `session_dead`，不再降级去读没有促销的旧目录。
+- 自定义 `baseUrl` 时积分查询跟着走同一出口（以前固定打到 `www.codebuddy.cn`）。
+- 构建可复现：`package-lock.json` 锁 esbuild 0.24.2；`build-web.mjs` 新增 `--strict`，
+  `prepack` 用它——找不到 esbuild 时直接失败，不再静默沿用旧 `dist`。
+- 数量口径统一为 22 个安全模型（代码 / 配置描述 / README 一致），并注明只精确放行
+  `hy4-preview`（同前缀的新实验号仍需人工复核）。
+- `describe.json` 生成化后补回 `wb_chat` / `wb_credits` 的「Requires the WorkBuddy desktop app
+  to be running」前提。
+- `contract.mjs` 扩容到 68 条断言，新增复检点名缺口的回归项：哨兵语义、计费域选择、
+  429 软硬区分、面板方法白名单、账本并发（`append` 与 `prune` 串行）、SSE 尾行 flush、
+  `start()` 兜底、本地日期；同时修掉一条恒真断言。
+- 顺手修：`recent` 按时间倒序（以前 `slice(-15).reverse()` 会先取到最旧那条）、
+  `wb-cleared` 时给出可操作提示、`selfcheck` 失败路径清理临时目录、`gen-describe` 英文语法。
+
+## 0.2.0
+
+按 hy4-preview 的审查报告把 17 类问题逐个修掉，并把 `hy4-preview` 纳入安全清单（仍只在本机，未推送 / 未发布）。
+
+- **新模型**：`hy4-preview` 进入安全清单（0.1.7 探测时它正好繁忙、误判为不可用），同时标为「谨慎」
+  —— 预览档，不要把高频自动化打到它身上。
+- **`worlds.workbuddy.hostInject` 真正生效**：关掉后 `start()` 与 60 秒巡检都不再改写宿主
+  `build\console\index.html`，并会主动清掉上一次留下的注入与备份；`stop()` 也先于开关判断执行还原
+  （装完再关掉的场景以前会漏还原）。
+- **promo 计算改成同一条促销说了算**：原来「生效倍率」取自真正打折的那条，「徽标 / 时段 / promoId」
+  取自优先级最高的生效项，两者可能不是同一条，导致面板写着 A 的名字、收着 B 的价。现在
+  `selectPromoDiscount()` 一次挑出「真正改价」的促销，`priceViewOf()` 的
+  `effective / promoId / windowText / discount` 全部来自它，并新增 `discounted` 布尔。
+- **促销时间解析**：`validFrom` / `validUntil` 现在同时接受 ISO 字符串与数字时间戳（<1e12 视为 Unix 秒
+  —— 以前数字时间戳被静默丢弃，过期活动会一直生效）；`daily` 时段在时区无法识别时退回 UTC
+  （以前 `catch` 里 `return 0`，等于把所有活动当成 00:00 生效）；`24:00` 与跨零点窗口照旧。
+- **`base` 倍率不再误读**：`multiplierOfText()` 同时剥前缀与后缀的 `x`。
+- **用量账本并发安全**：`append()` / `prune()` / `clear()` 共用一条串行队列，`prune` 与 `clear` 改成
+  写临时文件再 `rename` —— 以前 `prune()` 的整体重写会覆盖并发进行中的 `append()`。
+- **用量面板 token 列修好**：账本字段名是 `total / prompt / completion`，面板却按
+  `totalTokens / promptTokens / completionTokens` 读，所以「最近调用」的 token 列一直是 0。
+- **宿主注入自愈更彻底**：`inspectHostInjection()` 会真实比对注入脚本内容（新增 `fileStale` 与
+  `reason: injector-stale`），`ensureHostInjection()` 无论当前是否「看起来正常」都会把脚本更新到本版本
+  —— 以前脚本写进 `if (!state.ok)` 里，升级扩展后宿主跑的还是旧脚本。
+- **`--restore` 不再用备份覆盖宿主**：`scripts/host-inject.mjs --restore` 改调 `removeHostInjection()`
+  （只剥引用行、删注入脚本与备份），与「绝不用旧备份覆盖、避免把宿主降级」的原则一致；
+  `--check` 也把「注入脚本过期」算作失败。
+- **换行风格不再被改坏**：`stripInjection()` 按原文件的换行风格重建（以前会把 CRLF 全改成 LF）。
+- **`clearToken` 真的清得掉**：写不清空时返回失败不再是「假成功」；清空后写哨兵 `wb-cleared`，
+  `loadTokens()` 见到哨兵就当作已登出（`rediscover` 才回落到本机凭据库）。
+- **`/v3/config` 失败不再静默**：非 2xx、空数据、无模型条目分别打警告，方便判断是不是被降级到旧接口。
+- **计费域按区域选**：`WbUpstream` 现在接收 `region`，`billingUrl()` 用 `WB_BILLING_BASE[region]`
+  （以前按域名子串猜，自定义 `baseUrl` 会掉到国际计费域 `www.workbuddy.ai`）。
+- **SSE 收尾不再丢 usage**：流结束时 `decoder.decode()` 冲刷残留字节，并把最后一段没有换行的 `data:`
+  交给同一解析器 —— 以前末尾那段（正好带 `usage`）会被丢掉。
+- **429 两种性质分开**：`classifyHttpFailure()` 按文案把「额度耗尽」判成 `hard_credit`，其余 429 才是
+  `soft_rate`（以前两支返回同一个值）。
+- **解封密钥失败不再永久缓存**：`resolveTokensWithKey()` 的成功结果只复用 60 秒，失败也按 TTL 重试
+  —— 以前一次取密钥失败后，即使用户随后装了 WorkBuddy 桌面端也要重启扩展才能恢复。
+- **`pgrep` 缺失不再算「没在跑」**：`probePosix()` 识别 `command not found` / 退出码 127，返回
+  `via: 'error'`，不写进「未运行」的缓存。
+- **启动流程兜底**：`start()` 全程包 try/catch/finally，`pushEvent` 失败只警告；任何一步抛错都不会让
+  四盏灯永远停在「正在读取登录态…」。
+- **面板方法白名单**：`handleInvoke()` 先校验 `panel`/`method`（`PANEL_METHODS`），未知组合直接拒绝
+  —— 以前任意 panel 都能触发 `setToken` / `clearToken` 写密钥库。
+- **「今日」按本地日期**：`refreshToday()` 不再用 `toISOString()` 取日期（UTC+8 下会把 today 算成前一天）。
+- **`describe.json` 变成生成物**：新增 `scripts/gen-describe.mjs`，工具名 / 描述 / 参数 / tags 来自
+  `WB_TOOL_DECLS`，环境提示词来自 `src/ENV_PROMPT.md`，摘要与事件写在生成器里；`--check` 可验一致性。
+  删掉包里那份 724 字节的旧 `ENV_PROMPT.md` 模板（真正的模板是 `src/ENV_PROMPT.md`）。
+- **新增 `scripts/contract.mjs`**：静态契约 + 单元断言（describe 与源码一致、版本与 CHANGELOG 对齐、
+  提示词占位符都有对应变量、夜间/白天促销、数字时间戳、时区回退、安全清单、账本聚合、CRLF 保留），
+  没装 Coopanion 的机器上也能跑；`selfcheck.mjs` 找不到宿主时改为跑它。
+- **`reinstall.ps1` 不再往作者机器路径写**：默认输出到 `$env:LOCALAPPDATA\cortico-world-workbuddy\build`，
+  优先 `npm pack`（会走 `prepack` 重建构建产物），手工 `tar` 只作兜底。
+- **CI 补上真正的校验**：`npm run build:web` + `git diff --exit-code -- dist` + `node scripts/contract.mjs`；
+  Release 工作流与 CI 统一用 `npm ci`。
+
 ## 0.1.7
 
 按 WorkBuddy 官方对话给出的合规口径，给桥接加「安全清单」闸门（仍只在本机，未推送 / 未发布）。

@@ -6,7 +6,7 @@
  * 状态不明（请求格式报错）、媒体/代码补全模型，一律不通过外部软件调用。
  *
  * 这里把结论固化成三件事：
- *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（WorkBuddy 给的 21 个）；
+ *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（WorkBuddy 给的 22 个）；
  *   2. classifyModel()：给目录里每个模型打等级与理由，供面板展示与拦截；
  *   3. DEFAULT_SAFE_MODEL：当前选择失效时的回落项（同样是白名单内的 flash 档）。
  *
@@ -32,6 +32,9 @@ export const SAFE_MODEL_IDS = [
   'hy3-c',
   'hy3-x',
   'hunyuan-chat',
+  // 混元 4 预览：0.1.7 探测时它正忙（超时被判成不可用），用户指出后复测通过，
+  // 按用户要求纳入白名单；仍属 preview 档，放在 CAUTION 里提示「别高频自动化」。
+  'hy4-preview',
   // Kimi
   'kimi-k2.5',
   'kimi-k2.8-preview',
@@ -49,13 +52,13 @@ export const SAFE_MODEL_IDS = [
 export const SAFE_MODEL_GROUPS = [
   { label: 'DeepSeek', ids: ['deepseek-v4.1-flash', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v3-2-volc'] },
   { label: 'GLM', ids: ['glm-5.3-flash', 'glm-5.3', 'glm-5.2'] },
-  { label: '混元', ids: ['hy3', 'hy3-b', 'hy3-c', 'hy3-x', 'hunyuan-chat'] },
+  { label: '混元', ids: ['hy3', 'hy3-b', 'hy3-c', 'hy3-x', 'hunyuan-chat', 'hy4-preview'] },
   { label: 'Kimi', ids: ['kimi-k2.5', 'kimi-k2.8-preview', 'kimi-k3-1', 'kimi-k3.1-pro'] },
   { label: '其他', ids: ['minimax-m2.7', 'minimax-m3.1-flash', 'mimo-v2.6-pro', 'space-bunny', 'step-5-preview'] },
 ];
 
 /** 白名单里属于「免费试用/预览」的模型：能用，但不适合高频自动化调用。 */
-export const CAUTION_MODEL_IDS = ['hy3', 'hy3-b', 'hy3-c', 'kimi-k2.8-preview', 'step-5-preview'];
+export const CAUTION_MODEL_IDS = ['hy3', 'hy3-b', 'hy3-c', 'kimi-k2.8-preview', 'step-5-preview', 'hy4-preview'];
 
 /** 当前选择失效时的回落模型。 */
 export const DEFAULT_SAFE_MODEL = 'deepseek-v4.1-flash';
@@ -96,6 +99,8 @@ const RETIRED_IDS = [
 const FORMAT_UNSUPPORTED_IDS = ['glm-5.0-turbo'];
 
 /** 实验预览系列（能对话，但未列入安全清单）。 */
+// 只精确放行 hy4-preview 本身（在 SAFE_MODEL_IDS 里）；同前缀的新实验号（如 hy4-preview-v2）
+// 仍然会被判成「实验预览·未列入安全清单」，需要人工复核后再加白名单。
 const EXPERIMENTAL_PREFIXES = ['hy4-preview', 'hy4preview-'];
 
 const TIER_LABEL = {

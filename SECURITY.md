@@ -21,7 +21,7 @@ the Coopanion deployment `.env` if you paste one in the account panel yourself (
 
 ## Where data goes
 
-Only two hosts, both WorkBuddy's:
+Only three hosts, all WorkBuddy's:
 
 - `https://copilot.tencent.com` — model catalogue and chat completions (region `cn`)
 - `https://www.codebuddy.cn` — credit balance (region `cn`)
@@ -34,9 +34,9 @@ Nothing else. No logs contain tokens: every log line goes through `maskToken()`.
 - `<Coopanion data>/worlds/workbuddy/workbuddy-catalog.json` — cached model list, no credentials.
 - `worlds.workbuddy.*` in the companion config (region, model, `prefer`, `envPrompt`).
 - **Host files, only when the start-page button is injected:** `resources/app/build/console/index.html`
-  (one extra `<script>` line before the app bundle) and `resources/app/build/console/workbuddy-home.js`.
+  (0.3.0 removed the home-page injection; the extension no longer touches host files).
   The original `index.html` is kept as `index.html.workbuddy-backup` next to it.
-  Undo with `node scripts/host-inject.mjs --restore`, or delete `workbuddy-home.js` and the
+  Nothing to undo — the extension does not modify Coopanion files anymore. Earlier versions
   one-line reference by hand. A Coopanion update that replaces `build/console` simply removes the
   injection; the extension puts it back on the next start.
 

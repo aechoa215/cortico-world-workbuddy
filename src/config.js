@@ -14,7 +14,9 @@
  * @property {number} maxTokens 单次 wb_chat 的最大输出 token。
  * @property {boolean} envPrompt 是否把桥接状态写进 system 前缀的环境段。
  * @property {boolean} prefer 「中转站优先」：桌宠每轮对话是否先走 WorkBuddy 模型。默认关。
+ * @property {boolean} safeOnly 只允许调用安全清单内的公开对话模型。默认开。
  * 注意：手动粘贴的 access token 走 ctx.storeSecret()，不落配置。
+ * 0.3.0 起不再有 hostInject：扩展不再改写宿主任何文件，「中转站优先」只在 World 详情页开关。
  */
 
 export const WB_DEFAULTS = {
@@ -25,10 +27,8 @@ export const WB_DEFAULTS = {
   baseUrl: '',
   maxTokens: 2048,
   envPrompt: true,
-  /** 由开始页按钮 / World 详情页开关写入，两个入口共用这一份状态。 */
+  /** 由 World 详情页开关写入（0.3.0 起不再有开始页按钮）。 */
   prefer: false,
-  /** 是否允许改写宿主控制台 index.html 注入「中转站优先」按钮；关闭后不注入也不还原。 */
-  hostInject: true,
   /**
    * 只允许调用 WorkBuddy 公开对话模型（安全清单）。
    * 关掉后能用 disabled / 内部别名 / 预览等模型，但那属于「已知会违反对方使用建议」的操作，
@@ -84,17 +84,11 @@ export const WB_CONFIG_GROUP = {
         description: '在 system 前缀里告知 Coo 当前桥接的模型与积分倍率。',
         'x-hot': true,
       },
-      'worlds.workbuddy.hostInject': {
-        type: 'boolean',
-        title: '主界面按钮注入',
-        description: '在「开始」页加一个「中转站优先」按钮（会改写 Coopanion 的 build/console/index.html，停用或卸载时自动还原）。关掉后只能用 World 详情页的开关。',
-        'x-hot': true,
-      },
       'worlds.workbuddy.safeOnly': {
         type: 'boolean',
         title: '只调用安全清单模型',
         description:
-          '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 公开目录里的对话模型（21 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉可绕过限制，但那属于违反对方使用建议的操作，风险自负。',
+          '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 公开目录里的对话模型（22 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉可绕过限制，但那属于违反对方使用建议的操作，风险自负。',
         'x-hot': true,
       },
     },

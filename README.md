@@ -3,8 +3,8 @@
 把 **本机已登录的 WorkBuddy 客户端**（国内版 / 国际版）的模型桥接进
 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion) 桌宠：Coo 可以直接调用你
 WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看每个模型的
-**默认积分倍率**（如 `x0.79`）并点选要用的模型；「开始」页有一个「中转站优先」按钮，
-打开后桌宠每轮对话都先问 WorkBuddy。
+**默认积分倍率**（如 `x0.79`）并点选要用的模型；World 详情页有一个「是否启用Workbuddy」
+开关，打开后桌宠每轮对话都先问 WorkBuddy。
 
 这是一个 Cortico 的 World 扩展（`kind: world`，`api: 6`），纯 ESM JS、零运行时依赖，
 面板产物已随包构建好（`dist/webui.js`）。
@@ -14,12 +14,12 @@ WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看�
 > 按上游给出的倍率真实扣费；扩展不提供账号、不共享凭据、不绕过计费。
 > 请自行评估账号风险，官方 WorkBuddy 客户端始终是最安全的选择。
 
-## 安装（0.1.5，Coopanion 0.2.17 实机验证）
+## 安装（0.3.0，Coopanion 0.2.17 实机验证）
 
-一条命令（推荐，脚本会做完打包、装卸、哈希与版本校验、开始页注入）：
+一条命令（推荐，脚本会做完打包、装卸、哈希与版本校验）：
 
 ```powershell
-pwsh -File scripts/reinstall.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
 ```
 
 手工装的话，三步：
@@ -32,7 +32,7 @@ pwsh -File scripts/reinstall.ps1
    cd "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\extensions"
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" remove cortico-world-workbuddy
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" `
-     add "F:\coo-connect-wb\cortico-world-workbuddy-0.1.4.tgz" `
+     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.0.tgz" `
      --config.strict-dep-builds=false `
      --store-dir "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\pnpm\store\v11"
    ```
@@ -49,23 +49,10 @@ pwsh -File scripts/reinstall.ps1
    }
    ```
 
-3. 装「开始」页按钮（0.1.3 起脚本化，幂等）：
+3. 重启 Coopanion（ESM 模块缓存不支持热换代码），用带环境清理的启动器：
 
    ```powershell
-   node scripts/host-inject.mjs            # 检查 + 修复
-   node scripts/host-inject.mjs --check    # 只检查（退出码：0=正常，1=缺注入）
-   node scripts/host-inject.mjs --restore  # 从备份还原，彻底移除注入
-   ```
-
-   它把 `assets/workbuddy-home.js` 复制到 `<Coopanion>\resources\app\build\console\`，并在
-   `index.html` 里 `<script type="module" src="./index.js"></script>` **之前**插一行；首次
-   改动前自动把 `index.html` 备份成 `index.html.workbuddy-backup`，注入脚本头部带
-   `/* bundled:<version> */` 便于核对。
-
-4. 重启 Coopanion（ESM 模块缓存不支持热换代码），用带环境清理的启动器：
-
-   ```powershell
-   pwsh -File scripts/launch-coopanion.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/launch-coopanion.ps1
    ```
 
    > **为什么要有启动器**：终端里残留 `ELECTRON_RUN_AS_NODE=1`（比如跑过 Node 子进程）时，
@@ -73,22 +60,16 @@ pwsh -File scripts/reinstall.ps1
    > 打印 `v24.x`（node 版本）、`--enable-logging` 报 `bad option`。这不是二进制损坏，
    > 是环境变量被继承。启动器只清本进程树里的这个变量，不动用户/机器级设置。
 
-> 宿主升级会覆盖 `build\console`，注入随之消失——但扩展每 60 秒自检一次，发现缺失会自动
-> 重注入；「是否启用 WorkBuddy」面板里有「重新注入开始页按钮」按钮可手动触发；
-> 四盏灯里的「开始页按钮」会直接显示状态（在线 / 需要修复）。`wb_*` 工具不受影响。
 
 ## 卸载与还原
 
 - **只卸扩展**：在「World 扩展」里卸载 / 或 `pnpm remove cortico-world-workbuddy`。
-  之后开始页那一行会在 3 秒内自动消失（脚本检测到 `/api/worlds` 里没有 `workbuddy`），
   详情页入口随之消失，桌宠工具表里也不再有 `wb_*`——Coopanion 主体不受影响。
-- **注入会自动清**：停用 World、卸扩展、退出 Coopanion 时 `stop()` 都会调用
-  `removeHostInjection()`，把 `index.html` 的引用行剥掉并删掉注入脚本与备份——
-  宿主目录回到「没装过这个扩展」的样子，不会留下永久改动。
-- **想手动清**：`node scripts/host-inject.mjs --restore`（或手工删
-  `build\console\workbuddy-home.js` 并去掉 `index.html` 里那行）。
-- **开关状态**：`worlds.workbuddy.prefer` 留在 `data\home\companion\config.json` 里；
-  扩展不在时没人读它，重新装回来会恢复上次的状态。
+- **不碰宿主文件**：0.3.0 起扩展**不再往 Coopanion 主界面注入任何脚本或按钮**，
+  `resources\app` 下一个字节都不会被改写，卸载后不需要还原任何东西。
+- **旧版本残留**：如果装过 0.2.x，宿主 `build\console\` 里可能还留着 `workbuddy-home.js`
+  与 `index.html` 里的一行引用；删掉那个文件、去掉 `index.html` 里
+  `<script type="module" src="./workbuddy-home.js"></script>` 这一行即可。
 
 ## 工作原理
 
@@ -99,7 +80,7 @@ Coopanion (Coo)
        ├─ 凭据发现   %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
        │              （$wbEncrypted 信封 → 用桌面端自己的二进制自动解封）
        ├─ 上游客户端 copilot.tencent.com（对话）/ www.codebuddy.cn（计费）
-       │    ├─ GET  /v2/enterprises/personal/models          模型目录（credits = 积分倍率）
+       │    ├─ GET  /v3/config                              模型目录 + 促销（models / modelPromotions / modelTiers）
        │    ├─ POST /v2/chat/completions                     对话（SSE 流式）
        │    ├─ POST /v2/auth/refresh                         刷新 token（X-Refresh-Token）
        │    └─ POST /v2/billing/meter/get-user-resource      积分余额（只读）
@@ -122,17 +103,19 @@ Coopanion (Coo)
 
 ## 「中转站优先」开关
 
-一份状态（`worlds.workbuddy.prefer`），两个入口，默认都是**关**：
+一份状态（`worlds.workbuddy.prefer`），一个入口，默认是**关**：
 
 | 入口 | 位置 | 行为 |
 |---|---|---|
-| 开始页按钮 | 主界面「开始」→「可选择的模型：」下一排「中转站优先：」+ WorkBuddy 图标 | 点击高亮＝开；再点熄灭＝关 |
-| 详情页开关 | 「World 扩展」→ WorkBuddy 桥接 →「是否启用Workbuddy」 | 与按钮同步，任一入口改两处都变 |
+| 详情页开关 | 「World 扩展」→ WorkBuddy 桥接 →「是否启用Workbuddy」 | 勾选＝开；取消＝关 |
+
+> 0.3.0 起**不再往主界面「开始」页注入「中转站优先」按钮**（也就不需要改宿主文件）。
+> 想快速开关，把它当书签存一下 World 详情页即可。
 
 - 开 → 环境提示词告诉 Coo：每轮对话先 `wb_chat`（用 `worlds.workbuddy.model`），
   再把回答用自己的话讲出来并说明是哪个模型答的。
 - 关 → Coo 完全不碰 `wb_*`（用户明确点名 WorkBuddy 时除外）。
-- 点按钮时若没检测到主进程：按钮保持熄灭 + 弹「未检测到Workbuddy」，不会把开关打开。
+- 打开时若没检测到主进程：不会把开关打开，面板提示「未检测到Workbuddy」。
 - 主进程在 6 秒轮询里退出时，开关自动熄灭，避免亮着却调不通。
 
 ## 面板
@@ -141,7 +124,7 @@ Coopanion (Coo)
 |---|---|
 | 模型目录 | 刷新目录；逐模型一行：名称/id、**合规档位**、**此刻倍率**（含限时折扣时显示 `x0.5 ← x0.79 23:00–07:50`，x0 标「免费」）、上下文、推理档、「选用」按钮；默认只列安全清单，勾选「显示全部模型（含不建议项）」才展开其余项 |
 | 账号 | 登录态来源（本机发现 / 手动）、掩码 token、积分余额查询、重新检测、手动 token 存取 |
-| 是否启用 WorkBuddy | 「中转站优先」开关 + 主进程状态，与开始页按钮同步 |
+| 是否启用 WorkBuddy | 「中转站优先」开关 + WorkBuddy 主进程状态 |
 | 用量 | 区间概览（今天 / 近 7 天 / 近 30 天）、按模型聚合、积分包明细、限时优惠清单、最近调用；带「刷新余额」「清空本地账本」 |
 
 ### 安全清单（合规闸门）
@@ -150,14 +133,15 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 `disabled`、内部路由别名、媒体/代码补全与状态不明的模型都不要经外部软件调用，否则有风控/封号风险。
 这里把它落成代码：
 
-- 白名单 21 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
+- 白名单 22 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
   `deepseek-v4.1-flash`、`deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v3-2-volc`、
   `glm-5.3-flash`、`glm-5.3`、`glm-5.2`、`hy3`、`hy3-b`、`hy3-c`、`hy3-x`、`hunyuan-chat`、
-  `kimi-k2.5`、`kimi-k2.8-preview`、`kimi-k3-1`、`kimi-k3.1-pro`、`minimax-m2.7`、
+  `hy4-preview`、`kimi-k2.5`、`kimi-k2.8-preview`、`kimi-k3-1`、`kimi-k3.1-pro`、`minimax-m2.7`、
   `minimax-m3.1-flash`、`mimo-v2.6-pro`、`space-bunny`、`step-5-preview`。
-  其中 `hy3*` 与 `*preview` 标为「谨慎」（免费试用/预览，别做高频自动化）。
+  其中 `hy3*` 与 `*preview`（含 `hy4-preview`）标为「谨慎」（免费试用/预览，别做高频自动化）。
 - 其余全部**拒绝**：`wb-lite`（目录 `disabled:true`）、`auto` / `fast-model` / `balanced-model` /
-  `deep-model`（内部路由别名）、4 个媒体模型、`codewise-*`、`hy4-preview*`、19 个已下架的、
+  `deep-model`（内部路由别名）、4 个媒体模型、`codewise-*`、其他 `hy4-preview*` 变体（只精确放行
+  `hy4-preview`）、19 个已下架的、
   `glm-5.0-turbo`（11150 请求格式不符）。
 - 闸门是 `worlds.workbuddy.safeOnly`（默认 `true`）。开着时 `wb_chat` / `wb_select_model` / 面板「选用」
   三处一致拒绝，并说明「判定档位 + 理由 + 怎么解除」；关掉才放行，属于明示的风险自负。
@@ -202,25 +186,31 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 | `baseUrl` | `""` | 自定义上游地址，代理/中转用（重启生效） |
 | `maxTokens` | `2048` | `wb_chat` 单次输出上限 |
 | `envPrompt` | `true` | 是否把桥接状态写进 system 前缀（关掉后「中转站优先」也不生效） |
-| `prefer` | `false` | 「中转站优先」，由开始页按钮 / 详情页开关写入 |
-| `hostInject` | `true` | 是否注入「开始」页按钮（关掉后不碰宿主文件，只用详情页开关） |
+| `prefer` | `false` | 「中转站优先」，由详情页开关写入 |
 | `safeOnly` | `true` | 只允许调用安全清单内的公开对话模型；关掉会放行 disabled / 别名 / 预览等项，风险自负 |
 
 ## 开发与校验
 
 ```bash
 # 重新构建面板产物（改了 src/webui/client.js 后）
-node <Coopanion>/resources/app/node_modules/esbuild/bin/esbuild \
-  src/webui/client.js --bundle --format=esm --outfile=dist/webui.js
+# 优先用本地 devDependency（锁在 package-lock.json 的 0.24.2），没装则退回宿主自带的 esbuild；
+# `prepack` 走 `--strict`：两条路都没有就直接失败，绝不静默发布过期 dist。
+node scripts/build-web.mjs
+
+# 契约检查（不依赖宿主，CI 必跑）：describe.json 与源码一致、版本号与 CHANGELOG 对齐、
+# 促销/安全清单/账本断言，以及哨兵、计费域、429 软硬、面板白名单、并发、SSE flush 等回归断言
+node scripts/contract.mjs
+
+# 由源码重新生成 describe.json（改过工具声明或 ENV_PROMPT.md 之后）
+node scripts/gen-describe.mjs
 
 # 框架契约自检（dry-mount：定义、工具、envPrompt、webUi）
+# 缺宿主时（CI）自动改跑「离线检查」：全部文件 node --check + contract，不再无条件成功
 node scripts/selfcheck.mjs
 
 # 真实窗口 UI 验证（headless Chrome + CDP，连跑 5 轮；需 Coopanion 正在运行）
 node scripts/verify-ui.mjs --runs 5
 
-# 宿主注入状态
-node scripts/host-inject.mjs --check
 ```
 
 UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮导航都带 `?t=<时间戳>` 整页重载
@@ -228,7 +218,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 并把「路由挂载」与「面板渲染」拆成两条断言——否则一次产物没加载就会被误判成「按钮没了」。
 
 版本号规范：任何改动都 bump `package.json` 的 `version`，备份目录按版本命名
-（`F:\coo-connect-wb\0.1.4\`），再用 `scripts/reinstall.ps1` 装；它会在装完后逐文件比对哈希，
+（`F:\coo-connect-wb\0.3.0\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
 不一致直接非零退出。
 
 打包注意：**不要用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 `package.json`**
@@ -236,38 +226,25 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 用 node 读写 JSON；tgz 必须以 `package/` 为前缀：
 
 ```bash
-tar -czf cortico-world-workbuddy-0.1.4.tgz -C <stage> package
+tar -czf cortico-world-workbuddy-0.3.0.tgz -C <stage> package
 ```
 
 协议细节参照 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)
 （MIT）的实测结论；扩展框架契约见 Cortico 的 `docs/extensions.md` / `docs/worlds.md` /
 `docs/webui.md`。
 
-## 它改了宿主程序的哪些文件（以及怎么还原）
+## 宿主文件：一个字节都不改
 
-> 这是本扩展唯一会碰到 Coopanion 安装目录的地方，装之前请务必看完。
+0.3.0 起本扩展**不再往 Coopanion 主界面注入任何东西**——「中转站优先」只剩 World 详情页里
+那个勾选框，工具、面板、账本全在各自主张的地方，`resources\app` 下不会有任何改动，卸载即干净。
 
-「开始」页的「中转站优先：」按钮没有官方扩展点（Cortico 的 WebUI 只给每个 World 提供自己的
-面板，主页没有插槽），所以只能用一行注入实现：
+如果你装过 0.2.x，宿主 `build\console\` 里可能还留着两处痕迹，删掉即可：
 
-| 文件 | 改动 | 还原 |
-|---|---|---|
-| `<app>\build\console\index.html` | 在 `<script type="module" src="./index.js">` 前插入一行 `<script type="module" src="./workbuddy-home.js">` | 用备份 `index.html.workbuddy-backup` 覆盖，或删掉那一行 |
-| `<app>\build\console\workbuddy-home.js` | 新增注入脚本（约 11 KB，自包含，内嵌图标 data URL） | 删除该文件 |
-| `<app>\build\console\index.html.workbuddy-backup` | 首次注入前的原件备份 | 手动删掉即可 |
-
-```powershell
-node scripts/host-inject.mjs --check     # 查：缺注入时退出码 1
-node scripts/host-inject.mjs            # 补：幂等，顺带补齐备份
-node scripts/host-inject.mjs --restore  # 还原：有备份用备份，没有就地剥掉那一行
-```
-
-- 注入脚本自带 try/catch：查不到 `workbuddy` World（比如扩展被卸载）时整行按钮自动消失，
-  不会在主页留下死按钮，也不会抛异常影响主界面。
-- Coopanion 更新（换 `app.asar` / 重装）会把 `build/console` 覆盖回出厂状态 —— 注入随之消失，
-  扩展下次启动时 60 秒内自己补回来，四盏灯里的「开始页按钮」会告诉你当前状态。
-- 卸载扩展：`stop()` 会自动还原（无需手动 `--restore`），然后把包从 `data/extensions` 里
-  `pnpm remove` 掉即可；想直接禁止改写宿主文件，把 `worlds.workbuddy.hostInject` 设为 `false`。
+| 文件 | 说明 |
+|---|---|
+| `<app>\build\console\index.html` | 删掉 `<script type="module" src="./workbuddy-home.js"></script>` 这一行 |
+| `<app>\build\console\workbuddy-home.js` | 旧的注入脚本，直接删 |
+| `<app>\build\console\index.html.workbuddy-backup` | 首次注入前的原件备份，确认 `index.html` 干净后可删 |
 
 ## 发布（GitHub / npm / 扩展市场）
 
@@ -275,7 +252,7 @@ Cortico 的扩展**从 npm 安装**；GitHub 是源码与申请的入口，官�
 [cortico-extensions](https://github.com/Pal-AI-Lab/cortico-extensions) 只放标签词表、认证与覆盖项。
 Action 定时扫 npm 生成市场目录，所以发版顺序是：**先 npm publish，再 `[sync]` 催收录**。
 
-本包发布元数据（0.1.4 起）：
+本包发布元数据：
 
 | 项 | 值 | 为什么 |
 |---|---|---|
@@ -289,12 +266,12 @@ Action 定时扫 npm 生成市场目录，所以发版顺序是：**先 npm publ
 
 ```bash
 # 1. 发版前三连检（需要本机真实宿主）
-node scripts/selfcheck.mjs
-node scripts/host-inject.mjs --check
+node scripts/contract.mjs        # 不依赖宿主，68 条断言
+node scripts/selfcheck.mjs       # dry-mount 框架契约
 node scripts/verify-ui.mjs --runs 3
 
 # 2. 提交并打 tag
-git tag v0.1.4 && git push --tags
+git tag v0.3.0 && git push --tags
 
 # 3. 发布（prepack 会自动重建 dist/webui.js）
 npm publish --access public

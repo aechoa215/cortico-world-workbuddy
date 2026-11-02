@@ -13,20 +13,10 @@ import { detectWorkBuddy } from './wbproc.js';
 import { attachPromos, dailyWindowText, discountText, priceViewOf, promoActiveAt } from './promo.js';
 import { UsageLedger, summarize } from './usage.js';
 import { DEFAULT_SAFE_MODEL, SAFE_MODEL_IDS, classifyModel, preferredSafeModel, safeGroupsOf } from './safety.js';
-import { backupPathOf, describeHostInjection, ensureHostInjection, findAppRoot, inspectHostInjection, removeHostInjection } from './host.js';
+
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
-/** 开始页注入脚本的源码（装到宿主 console 目录的那份就是它）。 */
-const HOST_INJECTOR_FILE = fileURLToPath(new URL('../assets/workbuddy-home.js', import.meta.url));
 const CATALOG_FILE = 'workbuddy-catalog.json';
-/** 本包版本号，写进注入脚本尾部，宿主升级后能看出是哪一版注入的。 */
-const PKG_VERSION = (() => {
-  try {
-    return JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version ?? '';
-  } catch {
-    return '';
-  }
-})();
 
 /** 面板可用的语言文案。 */
 const L10N = {
@@ -97,11 +87,43 @@ export const WB_TOOL_DECLS = [
   {
     name: 'wb_credits',
     description:
-      'Show the remaining WorkBuddy credit balance of the signed-in account (read-only).',
+      'Show the remaining WorkBuddy credit balance of the signed-in account (read-only). Requires the WorkBuddy desktop app to be running.',
     tags: ['read'],
     parameters: { type: 'object', additionalProperties: false, properties: {} },
   },
 ];
+
+/**
+ * 「用户主动登出」的哨兵值。
+ *
+ * 框架的 `ctx.storeSecret(name, '')` 会被拒绝（空值不写 .env），所以以前点「清除密钥」
+ * 写不进去、下次 `loadTokens()` 又把旧 token 读回来，界面一直显示「已登录」。
+ * 这里写一个不可能与真 token 相撞的字符串，`loadTokens()` 见到它就当作「已登出」。
+ */
+export const TOKEN_CLEARED = 'wb-cleared';
+/**
+ * 「允许自动发现」哨兵：用户点过「重新探测」并且成功之后写它。
+ *
+ * 为什么需要两个哨兵：框架的 storeSecret 拒绝空值（写空串会被丢掉），
+ * 所以「登出」只能靠 `wb-cleared` 表示；但如果 rediscover 只是本次进程内跳过它，
+ * 密钥库里的 `wb-cleared` 还在，扩展一重启就又变回未登录（审查报告第 2 条）。
+ * 于是 rediscover 成功后把哨兵换成 `wb-auto`：既不是旧 token，也不阻止自动发现。
+ */
+export const TOKEN_AUTO = 'wb-auto';
+
+/**
+ * 面板 → 允许调用的方法。
+ *
+ * 与 `webUi().panels[].getMethods` 是同一套口径：`getMethods` 声明的是「打开面板时会读的方法」，
+ * 这里还包含按钮触发的写方法。不在表里的组合一律报错——特别是不允许从任意面板
+ * 调到 `setToken` / `clearToken`（会写框架的密钥库）。
+ */
+export const PANEL_METHODS = {
+  priority: ['state', 'set', 'process'],
+  usage: ['state', 'refresh', 'clear'],
+  models: ['state', 'refresh', 'select'],
+  account: ['state', 'rediscover', 'credits', 'setToken', 'clearToken'],
+};
 
 export class WorkBuddyWorld {
   id = 'workbuddy';
@@ -130,12 +152,10 @@ export class WorkBuddyWorld {
     /** @type {ReturnType<typeof setInterval> | null} */
     this._procTimer = null;
     /**
-     * 主界面注入状态（开始页那排按钮）。宿主升级会覆盖 build/console，所以启动时自检 + 自动补注入。
+     * 0.3.0 起不再往宿主主界面注入按钮：这里只剩「中转站优先」开关本身的状态。
      * @type {null | { appRoot: string, consoleDir: string, htmlPath: string, ok: boolean, reason: string, changed: string[], checkedAt: number }}
      */
-    this.hostUi = null;
     /** @type {ReturnType<typeof setInterval> | null} */
-    this._hostTimer = null;
     /**
      * 目录里带进来的促销 / 档位（/v3/config 的 modelPromotions + modelTiers）。
      * 倍率不能只看模型的 credits：夜间折扣、限时免费都挂在这些条目上。
@@ -165,7 +185,7 @@ export class WorkBuddyWorld {
   }
 
   upstream() {
-    return new WbUpstream({ baseUrl: this.baseUrl(), log: this.log });
+    return new WbUpstream({ baseUrl: this.baseUrl(), region: this.cfg.region, log: this.log });
   }
 
   catalogPath() {
@@ -219,74 +239,6 @@ export class WorkBuddyWorld {
     return this.proc;
   }
 
-  /**
-   * 检查（并在需要时修复）开始页注入。
-   *
-   * 宿主升级/重装会把 `resources/app/build/console` 整个覆盖掉，注入随之消失——
-   * 此时按钮不见，但 `wb_*` 工具照常能用。所以这里「尽力而为」地补回来：
-   * 找不到宿主目录、没有写权限、文件被锁，都只记 warn，绝不抛出去。
-   *
-   * @param {{ repair?: boolean }} [opts] repair=false 时只检查不动手。
-   */
-  async syncHostUi(opts = {}) {
-    const repair = opts.repair === true;
-    const appRoot = findAppRoot({ dataDir: this.ctx.dataDir, packageDir: this.ctx.packageDir });
-    let state = inspectHostInjection(appRoot);
-    const changed = [];
-    if (repair && !state.ok && state.htmlFound) {
-      let source = '';
-      try {
-        source = readFileSync(HOST_INJECTOR_FILE, 'utf8');
-      } catch (err) {
-        this.log.warn?.(`workbuddy: 读不到注入脚本 ${HOST_INJECTOR_FILE}：${err?.message ?? err}`);
-      }
-      if (source) {
-        const r = ensureHostInjection({ appRoot, source, sourceVersion: PKG_VERSION });
-        changed.push(...r.changed);
-        state = r.state ?? state;
-        if (!r.ok && r.reason) {
-          this.log.warn?.(`workbuddy: 主界面按钮注入失败（${this.cfg.prefer ? '不影响桌宠调用，仅少了开始页入口' : '不影响使用'}）：${r.reason}`);
-        } else if (r.changed.length > 0) {
-          this.log.info?.(`workbuddy: 已修复主界面注入（${r.changed.join(', ')}），下次打开控制台即可看到按钮。`);
-        }
-      }
-    }
-    this.hostUi = { ...state, changed, checkedAt: Date.now() };
-    return this.hostUi;
-  }
-
-  /**
-   * 撤掉宿主注入（停用 / 卸载 / 退出时调用）。
-   *
-   * 扩展市场的硬规矩：改写宿主程序文件的扩展，停用或卸载时必须把改动还原，
-   * 否则改动会一直留在本地——`cortico-world-coo-control` 就是因为这条被拉黑的。
-   * 这里只剥引用行、删注入脚本和备份，不用旧备份覆盖 index.html（避免把宿主升级降级）。
-   */
-  async removeHostUi() {
-    if (this.cfg.hostInject === false) return { ok: true, changed: [], reason: 'disabled' };
-    try {
-      const appRoot = findAppRoot({ dataDir: this.ctx.dataDir, packageDir: this.ctx.packageDir });
-      const r = removeHostInjection(appRoot);
-      if (r.changed.length > 0) {
-        this.log.info?.(`workbuddy: 已还原主界面注入（${r.changed.join(', ')}），宿主文件恢复未改动状态。`);
-      } else if (!r.ok && r.reason) {
-        this.log.warn?.(`workbuddy: 还原主界面注入失败：${r.reason}`);
-      }
-      this.hostUi = r.state ? { ...r.state, changed: [], checkedAt: Date.now() } : null;
-      return r;
-    } catch (err) {
-      const reason = String(err?.message ?? err);
-      this.log.warn?.(`workbuddy: 还原主界面注入失败：${reason}`);
-      return { ok: false, changed: [], reason };
-    }
-  }
-
-  /** 主界面注入状态的行摘要（给面板/日志用）。 */
-  hostUiLine() {
-    if (!this.hostUi) return 'unknown';
-    return describeHostInjection(this.hostUi);
-  }
-
   /** 「中转站优先」是否打开。默认关。 */
   get preferOn() {
     return this.cfg.prefer === true;
@@ -297,7 +249,7 @@ export class WorkBuddyWorld {
   }
 
   /**
-   * 开关的唯一写入口：开始页按钮与 World 详情页开关都打这里，保证两边永远同一份状态。
+   * 开关的唯一写入口：World 详情页「是否启用Workbuddy」勾选框打这里。
    * @param {boolean} on
    */
   async setPrefer(on) {
@@ -315,7 +267,7 @@ export class WorkBuddyWorld {
     return state;
   }
 
-  /** 开始页 / 详情页共用的状态对象。 */
+  /** 「中转站优先」面板用的状态对象。 */
   priorityState() {
     return {
       /** @type {boolean} */
@@ -329,16 +281,6 @@ export class WorkBuddyWorld {
       authed: !!this.tokens,
       catalogSize: this.catalog.length,
       checkedAt: this.proc.at,
-      /** 开始页按钮是否已注入宿主（宿主升级会覆盖，启动时自动补回）。 */
-      hostUi: this.hostUi
-        ? {
-            ok: !!this.hostUi.ok,
-            reason: this.hostUi.reason ?? '',
-            label: describeHostInjection(this.hostUi),
-            consoleDir: this.hostUi.consoleDir ?? '',
-            backup: backupPathOf(this.hostUi),
-          }
-        : null,
     };
   }
 
@@ -346,7 +288,7 @@ export class WorkBuddyWorld {
   // 凭据：手动粘贴（密钥库）优先，其次本机发现
   // -------------------------------------------------------------------------
 
-  async loadTokens() {
+  async loadTokens(opts = {}) {
     // 框架的 ctx.secret(name) 是同步的（读部署 .env / 进程环境），没有 Promise 的 catch。
     let manual = null;
     try {
@@ -354,9 +296,18 @@ export class WorkBuddyWorld {
     } catch {
       manual = null;
     }
-    if (manual) {
+    const signedOut = manual === TOKEN_CLEARED;
+    if (manual === TOKEN_AUTO) manual = null;
+    if (manual && !signedOut) {
       this.tokens = { accessToken: manual, source: 'manual' };
       return this.tokens;
+    }
+    // 用户显式登出后，不再偷偷从数据目录里把凭据读回来——否则「清除」等于没生效。
+    // 想重新发现，走面板的「重新探测」（rediscover）或重新填 token。
+    if (signedOut && opts.rediscover !== true) {
+      this.tokens = null;
+      this.lastError = '已登出：点「重新探测」或重新填 token 才能继续使用。';
+      return null;
     }
     const found = discoverCredentials(this.cfg.credentialsDir || undefined);
     if (found) {
@@ -527,72 +478,72 @@ export class WorkBuddyWorld {
   async start(host) {
     this.host = host;
     this.started = false;
-    this.loadCatalogFromDisk();
-    await this.loadTokens();
-    await this.syncProc(true);
-    this._procTimer = setInterval(() => {
-      void (async () => {
-        const before = this.proc.running;
-        try {
-          const state = await this.syncProc(true);
-          if (state.running !== before) this.broadcast({ kind: 'process', ...this.priorityState() });
-          // 主进程退出后中转站不可能再用：把「中转站优先」一并熄灭，避免界面亮着却调不通。
-          if (!state.running && this.preferOn) await this.setPrefer(false);
-        } catch {
-          /* 探测失败不改状态，等下一次 */
-        }
-      })();
-    }, 6000);
-    this._procTimer.unref?.();
-    // 刚启动时探测偶尔比桌面端枚举慢半拍：1.2 秒后再确认一次，免得界面先亮出「未检测到主进程」。
-    this._procConfirm = setTimeout(() => {
-      void this.syncProc(true)
-        .then(() => this.broadcast({ kind: 'process', ...this.priorityState() }))
-        .catch(() => {});
-    }, 1200);
-    this._procConfirm.unref?.();
-    // 开始页按钮的自检 + 自动补注入：宿主升级会覆盖 build/console，这里负责长回来。
+    // 整个启动流程包在 try/finally 里：任何一步抛错（网络、文件、宿主事件）都不能让
+    // `started` 永远停在 false——那会让四盏灯一直显示「正在读取登录态…」。
     try {
-      await this.syncHostUi({ repair: true });
+      this.loadCatalogFromDisk();
+      await this.loadTokens();
+      await this.syncProc(true);
+      this._procTimer = setInterval(() => {
+        void (async () => {
+          const before = this.proc.running;
+          try {
+            const state = await this.syncProc(true);
+            if (state.running !== before) this.broadcast({ kind: 'process', ...this.priorityState() });
+            // 主进程退出后中转站不可能再用：把「中转站优先」一并熄灭，避免界面亮着却调不通。
+            if (!state.running && this.preferOn) await this.setPrefer(false);
+          } catch {
+            /* 探测失败不改状态，等下一次 */
+          }
+        })();
+      }, 6000);
+      this._procTimer.unref?.();
+      // 刚启动时探测偶尔比桌面端枚举慢半拍：1.2 秒后再确认一次，免得界面先亮出「未检测到主进程」。
+      this._procConfirm = setTimeout(() => {
+        void this.syncProc(true)
+          .then(() => this.broadcast({ kind: 'process', ...this.priorityState() }))
+          .catch(() => {});
+      }, 1200);
+      this._procConfirm.unref?.();
+      // 有凭据而目录为空时后台补一次刷新，失败只记日志。
+      if (this.tokens && this.catalog.length === 0) {
+        this.refreshCatalog().catch((err) => {
+          this.lastError = err?.message ?? String(err);
+          this.log.warn(`workbuddy: 启动时刷新目录失败：${this.lastError}`);
+        });
+      }
+      // 用量：今日小计从账本重算；余额快照后台补一份（查不到也不影响启动）。
+      try {
+        await this.refreshToday();
+      } catch (err) {
+        this.log.warn?.(`workbuddy: 读取用量账本失败：${err?.message ?? err}`);
+      }
+      if (this.tokens) {
+        void this.syncBalance().catch(() => {});
+      }
+      // 挂载事件只是通知：宿主事件总线出问题时不该拖累启动。
+      try {
+        await host.pushEvent({
+          type: 'workbuddy.started',
+          ts: new Date().toISOString(),
+          source: this.id,
+          origin: 'internal',
+          senderKey: this.id,
+          text: this.tokens
+            ? `WorkBuddy 桥接已挂载：${this.cfg.region} 区，目录 ${this.catalog.length} 个模型，当前模型 ${this.cfg.model || '(未选)'}。`
+            : 'WorkBuddy 桥接已挂载，但未发现登录态；wb_* 工具暂不可用。',
+        });
+      } catch (err) {
+        this.log.warn?.(`workbuddy: 挂载事件推送失败（不影响 wb_* 工具）：${err?.message ?? err}`);
+      }
     } catch (err) {
-      this.log.warn?.(`workbuddy: 主界面注入自检失败（不影响 wb_* 工具）：${err?.message ?? err}`);
+      this.log.warn?.(`workbuddy: 启动流程异常（wb_* 工具仍可尝试调用）：${err?.message ?? err}`);
+    } finally {
+      this.started = true;
     }
-    this._hostTimer = setInterval(() => {
-      void this.syncHostUi({ repair: true }).catch(() => {});
-    }, 60000);
-    this._hostTimer.unref?.();
-    // 有凭据而目录为空时后台补一次刷新，失败只记日志。
-    if (this.tokens && this.catalog.length === 0) {
-      this.refreshCatalog().catch((err) => {
-        this.lastError = err?.message ?? String(err);
-        this.log.warn(`workbuddy: 启动时刷新目录失败：${this.lastError}`);
-      });
-    }
-    // 用量：今日小计从账本重算；余额快照后台补一份（查不到也不影响启动）。
-    try {
-      await this.refreshToday();
-    } catch (err) {
-      this.log.warn?.(`workbuddy: 读取用量账本失败：${err?.message ?? err}`);
-    }
-    if (this.tokens) {
-      void this.syncBalance().catch(() => {});
-    }
-    await host.pushEvent({
-      type: 'workbuddy.started',
-      ts: new Date().toISOString(),
-      source: this.id,
-      origin: 'internal',
-      senderKey: this.id,
-      text: this.tokens
-        ? `WorkBuddy 桥接已挂载：${this.cfg.region} 区，目录 ${this.catalog.length} 个模型，当前模型 ${this.cfg.model || '(未选)'}。`
-        : 'WorkBuddy 桥接已挂载，但未发现登录态；wb_* 工具暂不可用。',
-    });
-    this.started = true;
   }
 
   async stop() {
-    // 先还原宿主改动再收摊：市场规矩是「停用/卸载不留痕」。
-    await this.removeHostUi();
     if (this._procTimer) {
       clearInterval(this._procTimer);
       this._procTimer = null;
@@ -600,10 +551,6 @@ export class WorkBuddyWorld {
     if (this._procConfirm) {
       clearTimeout(this._procConfirm);
       this._procConfirm = null;
-    }
-    if (this._hostTimer) {
-      clearInterval(this._hostTimer);
-      this._hostTimer = null;
     }
     for (const s of this._sockets) {
       try {
@@ -842,11 +789,6 @@ export class WorkBuddyWorld {
           state: this.preferOn ? 'online' : 'offline',
           hint: this.preferOn ? '开：桌宠优先走 WorkBuddy 模型' : '关：跳过 WorkBuddy',
         },
-        {
-          label: zh ? '开始页按钮' : 'Home button',
-          state: this.hostUi?.ok ? 'online' : this.hostUi ? 'error' : 'offline',
-          hint: this.hostUi ? this.hostUiLine() : '正在检查宿主注入…',
-        },
       ],
       badges: [
         { label: zh ? '区域' : 'Region', value: this.cfg.region, tone: 'plain' },
@@ -888,8 +830,8 @@ export class WorkBuddyWorld {
           id: 'priority',
           title: zh ? '是否启用 WorkBuddy' : 'Enable WorkBuddy',
           description: zh
-            ? '与「开始」页的「中转站优先」按钮同一份状态：打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过。默认为关。'
-            : 'Same state as the “Relay first” button on the Home page: when on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Off by default.',
+            ? '打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过。默认为关。需要 WorkBuddy 桌面端主进程在运行。'
+            : 'When on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Off by default. Requires the WorkBuddy desktop app to be running.',
           getMethods: ['state'],
         },
         {
@@ -1022,7 +964,11 @@ export class WorkBuddyWorld {
     const records = await this.ledger.readAll();
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const day = start.toISOString().slice(0, 10);
+    // 用本地日期，不用 toISOString()：后者是 UTC，在 UTC+8 的 00:00–08:00 之间
+    // 会得到「昨天」，面板上的「今天」就会指错一天。
+    const day = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(
+      start.getDate(),
+    ).padStart(2, '0')}`;
     const today = { day, credit: 0, calls: 0, prompt: 0, completion: 0 };
     for (const r of records) {
       if (typeof r?.ts !== 'number' || r.ts < start.getTime()) continue;
@@ -1048,7 +994,15 @@ export class WorkBuddyWorld {
 
   /** 面板数据面。 */
   async handleInvoke(panel, method, args, language) {
-    // 「中转站优先」：开始页按钮与 World 详情页开关共用这组方法，状态只有一个来源。
+    // 面板 ↔ 方法白名单。
+    //
+    // 之前任何 panel 都能调到 `setToken` / `clearToken`，等于把「写密钥库」暴露给
+    // 任意页面的调用方。这里按声明收口：没列出来的组合直接拒绝。
+    const allowed = PANEL_METHODS[panel];
+    if (!allowed) throw new Error(`unknown panel: ${panel}`);
+    if (!allowed.includes(method)) throw new Error(`panel ${panel} 不支持方法 ${method}`);
+
+    // 「中转站优先」：详情页开关走这组方法，状态只有一个来源。
     if (panel === 'priority') {
       if (method === 'state') {
         await this.syncProc();
@@ -1070,21 +1024,6 @@ export class WorkBuddyWorld {
       if (method === 'process') {
         await this.syncProc(true);
         return { ok: true, ...this.priorityState() };
-      }
-      if (method === 'host') {
-        // 只看不动：面板用它画「开始页按钮：已注入 / 可修复」。
-        const state = await this.syncHostUi({ repair: false });
-        return { ok: !!state.ok, hostUi: this.priorityState().hostUi, changed: state.changed };
-      }
-      if (method === 'repair') {
-        // 手动修复入口：宿主升级覆盖了 build/console 之后，用户在面板上点一下就能补回来。
-        const state = await this.syncHostUi({ repair: true });
-        const hostUi = this.priorityState().hostUi;
-        if (!state.ok) {
-          return { ok: false, error: `主界面按钮修复失败：${state.reason || 'unknown'}`, hostUi };
-        }
-        this.broadcast({ kind: 'host', ...this.priorityState() });
-        return { ok: true, hostUi, changed: state.changed };
       }
       throw new Error(`unknown method: ${method}`);
     }
@@ -1148,14 +1087,17 @@ export class WorkBuddyWorld {
       return { ok: true, mask: maskToken(token) };
     }
     if (method === 'clearToken') {
+      // 写哨兵而不是空串（空串会被框架拒掉），并回读确认——写不进去就如实报错。
+      let stored = false;
       try {
-        this.ctx.storeSecret('accessToken', '');
-      } catch {
-        // 空值会被框架拒绝；清空手动密钥时忽略即可。
+        this.ctx.storeSecret('accessToken', TOKEN_CLEARED);
+        stored = this.ctx.secret('accessToken') === TOKEN_CLEARED;
+      } catch (err) {
+        return { ok: false, error: `写入失败：${err?.message ?? err}` };
       }
       this.tokens = null;
-      await this.loadTokens();
-      return { ok: true, authed: !!this.tokens };
+      if (!stored) return { ok: false, error: '密钥库拒绝了写入，未能登出。' };
+      return { ok: true, authed: false };
     }
     if (method === 'credits') {
       const tokens = await this.ensureTokens();
@@ -1171,7 +1113,17 @@ export class WorkBuddyWorld {
     }
     if (method === 'rediscover') {
       this.tokens = null;
-      await this.loadTokens();
+      // 用户主动要求重新探测：这时才允许越过「已登出」哨兵去读数据目录。
+      await this.loadTokens({ rediscover: true });
+      if (this.tokens?.accessToken) {
+        // 探测成功就把哨兵从「已登出」换成「允许自动发现」：
+        // 否则密钥库里留着 wb-cleared，扩展一重启又会变回未登录（审查报告第 2 条）。
+        try {
+          this.ctx.storeSecret('accessToken', TOKEN_AUTO);
+        } catch (err) {
+          this.log.warn?.(`workbuddy: 更新凭据哨兵失败（下次启动可能仍需重新探测）：${err?.message ?? err}`);
+        }
+      }
       return { ok: true, authed: !!this.tokens, source: this.tokens?.source ?? null, error: this.tokens ? null : this.lastError };
     }
     throw new Error(`unknown method: ${method}`);

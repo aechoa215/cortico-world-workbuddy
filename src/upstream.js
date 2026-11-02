@@ -93,10 +93,15 @@ function commonHeaders(cred, extra = {}) {
 
 export class WbUpstream {
   /**
-   * @param {{ baseUrl: string, log?: { warn(msg: string): void } }} opts
+   * @param {{ baseUrl: string, region?: 'cn' | 'global', log?: { warn(msg: string): void } }} opts
    */
   constructor(opts) {
-    this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = (opts.baseUrl ?? '').replace(/\/+$/, '');
+    /** 用户显式配置了 baseUrl（代理 / 镜像）：计费请求也走它。 */
+    this.customBase = Boolean(this.baseUrl) && !Object.values(WB_REGION_BASE).includes(this.baseUrl);
+    // 计费域只看区域，不看 baseUrl：以前按域名子串猜，自定义 baseUrl（例如走代理/镜像）
+    // 会悄悄落到国际计费域 www.workbuddy.ai，查出来的余额是另一个账号的。
+    this.region = opts.region === 'global' ? 'global' : 'cn';
     this.log = opts.log ?? { warn: () => {} };
   }
 
@@ -104,14 +109,14 @@ export class WbUpstream {
     return `${this.baseUrl}${path}`;
   }
 
-  /** 计费域的完整地址（积分、签到、福利都在这边，和 chat 域不同）。 */
+  /**
+   * 计费域的完整地址（积分、签到、福利都在这边，和 chat 域不同）。
+   *
+   * 没配 `baseUrl` 时按区域查表；配了自定义 baseUrl（代理/镜像）就跟着走同一个出口，
+   * 否则 chat 走代理、积分直连官方域名，代理用户的网络与隐私假设会被打破。
+   */
   billingUrl(path) {
-    const base = this.baseUrl.includes('copilot.tencent.com')
-      ? WB_BILLING_BASE.cn
-      : this.baseUrl.includes('codebuddy.ai')
-        ? 'https://www.codebuddy.ai'
-        : WB_BILLING_BASE.global;
-    return `${base}${path}`;
+    return `${this.customBase ? this.baseUrl : WB_BILLING_BASE[this.region]}${path}`;
   }
 
   /**
@@ -140,16 +145,30 @@ export class WbUpstream {
       });
       const body = await res.json().catch(() => null);
       const data = body?.data ?? body;
-      if (res.ok && data && typeof data === 'object') {
+      if (!res.ok) {
+        // 静默降级会让「为什么没有限时优惠」变成悬案，这里至少留一条 warn。
+        this._authFailed = res.status === 401 || res.status === 403;
+        this.log?.warn?.(
+          `产品配置 HTTP ${res.status}${this._authFailed ? '（认证失败，不再降级）' : '，退回旧目录路径（本次没有促销信息）'}。`,
+        );
+      } else if (!data || typeof data !== 'object') {
+        this.log?.warn?.('产品配置返回空内容，退回旧目录路径（本次没有促销信息）。');
+      } else {
         const rawModels = Array.isArray(data.models) ? data.models : [];
         const models = rawModels.map((m) => normalizeModel(m)).filter((m) => m && m.id);
         if (models.length > 0) {
           const promos = parsePromos(data.modelPromotions, data.modelTiers);
           return { models: attachPromos(models, promos), promos, source: 'v3-config' };
         }
+        this.log?.warn?.('产品配置里没有可用的模型条目，退回旧目录路径。');
       }
     } catch (err) {
       this.log?.warn?.(`产品配置读取失败，退回旧目录路径：${err?.message ?? err}`);
+    }
+    // 认证类失败（401/403）再打一次旧接口没有意义：token 本身是死的，
+    // 降级只会把真实错误（session_dead）换成 legacy 的二次失败，掩盖问题。
+    if (this._authFailed) {
+      throw new WbUpstreamError('WorkBuddy 登录态已失效（产品配置返回 401/403），请重新登录客户端。', 'session_dead');
     }
     const models = await this.fetchModelsLegacy(cred);
     return { models, promos: [], source: 'legacy' };
@@ -327,53 +346,62 @@ export class WbUpstream {
     let usage;
     const decoder = new TextDecoder();
     let buf = '';
+    /** 处理一行 SSE；末尾残留（没有换行）也走这里。 */
+    const handleLine = (raw) => {
+      const line = raw.trimEnd();
+      if (!line.startsWith('data:')) return;
+      const payload = line.slice(5).trim();
+      if (payload === '' || payload === '[DONE]') return;
+      let evt;
+      try {
+        evt = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      // 业务错误（排队 6020/6021/6022、限流 6004/14003、渠道 11128 等）原样抛出。
+      if (typeof evt.code === 'number' && evt.code !== 0 && evt.code !== 200) {
+        throw new WbUpstreamError(`上游业务错误 code=${evt.code}: ${evt.msg ?? evt.message ?? ''}`, {
+          code: evt.code,
+          kind: classifyBusinessCode(evt.code),
+        });
+      }
+      const delta = evt.choices?.[0]?.delta?.content ?? evt.choices?.[0]?.message?.content;
+      if (typeof delta === 'string' && delta !== '') {
+        text += delta;
+        onDelta(delta);
+      }
+      if (typeof evt.credit === 'number') credit = evt.credit;
+      if (evt.usage && typeof evt.usage === 'object') {
+        // 最后一段 SSE 带完整用量（实测：prompt_tokens / completion_tokens / total_tokens /
+        // 明细里的 cached_tokens、reasoning_tokens，以及本次真实扣费 credits 的 `credit`）。
+        const u = evt.usage;
+        usage = {
+          promptTokens: numberOrUndefined(u.prompt_tokens),
+          completionTokens: numberOrUndefined(u.completion_tokens),
+          totalTokens: numberOrUndefined(u.total_tokens),
+          cachedTokens:
+            numberOrUndefined(u.prompt_tokens_details?.cached_tokens) ?? numberOrUndefined(u.cached_tokens),
+          reasoningTokens:
+            numberOrUndefined(u.completion_tokens_details?.reasoning_tokens) ??
+            numberOrUndefined(u.completion_thinking_tokens),
+          credit: numberOrUndefined(u.credit),
+        };
+        if (typeof u.credit === 'number') credit = u.credit;
+      }
+    };
     for await (const chunk of res.body) {
       buf += decoder.decode(chunk, { stream: true });
       let idx;
       while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trimEnd();
+        const line = buf.slice(0, idx);
         buf = buf.slice(idx + 1);
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        let evt;
-        try {
-          evt = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        // 业务错误（排队 6020/6021/6022、限流 6004/14003、渠道 11128 等）原样抛出。
-        if (typeof evt.code === 'number' && evt.code !== 0 && evt.code !== 200) {
-          throw new WbUpstreamError(`上游业务错误 code=${evt.code}: ${evt.msg ?? evt.message ?? ''}`, {
-            code: evt.code,
-            kind: classifyBusinessCode(evt.code),
-          });
-        }
-        const delta = evt.choices?.[0]?.delta?.content ?? evt.choices?.[0]?.message?.content;
-        if (typeof delta === 'string' && delta !== '') {
-          text += delta;
-          onDelta(delta);
-        }
-        if (typeof evt.credit === 'number') credit = evt.credit;
-        if (evt.usage && typeof evt.usage === 'object') {
-          // 最后一段 SSE 带完整用量（实测：prompt_tokens / completion_tokens / total_tokens /
-          // 明细里的 cached_tokens、reasoning_tokens，以及本次真实扣费 credits 的 `credit`）。
-          const u = evt.usage;
-          usage = {
-            promptTokens: numberOrUndefined(u.prompt_tokens),
-            completionTokens: numberOrUndefined(u.completion_tokens),
-            totalTokens: numberOrUndefined(u.total_tokens),
-            cachedTokens:
-              numberOrUndefined(u.prompt_tokens_details?.cached_tokens) ?? numberOrUndefined(u.cached_tokens),
-            reasoningTokens:
-              numberOrUndefined(u.completion_tokens_details?.reasoning_tokens) ??
-              numberOrUndefined(u.completion_thinking_tokens),
-            credit: numberOrUndefined(u.credit),
-          };
-          if (typeof u.credit === 'number') credit = u.credit;
-        }
+        handleLine(line);
       }
     }
+    // 流的最后一段可能没有换行（实测带 usage 的收尾帧就是这样）；不 flush 会把它整段丢掉，
+    // 于是「本次消耗积分」永远是 0。
+    buf += decoder.decode();
+    if (buf.trim() !== '') handleLine(buf);
     return { text, credit, usage };
   }
 }
@@ -439,9 +467,11 @@ function str(v) {
   return typeof v === 'string' && v !== '' ? v : undefined;
 }
 
-function classifyHttpFailure(status, text) {
+export function classifyHttpFailure(status, text) {
   if (status === 401 || status === 403) return 'session_dead';
-  if (status === 429) return /6004|14003|重置|reset/i.test(text) ? 'soft_rate' : 'soft_rate';
+  // 429 以前两个分支都返回 soft_rate（三元表达式两边一样，等于没判）。真实语义是：
+  // 「额度耗尽」与「太频繁」要分开，前者不该被当成可重试的软限流。
+  if (status === 429) return /14018|额度|quota|insufficient|exhaust/i.test(text) ? 'hard_credit' : 'soft_rate';
   if (status === 404) return 'not_found';
   if (status >= 400 && status < 500) return 'client';
   return 'server';

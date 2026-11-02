@@ -42,19 +42,12 @@ const TEXT = {
     priorityTitle: '中转站优先',
     priorityLabel: '是否启用Workbuddy',
     priorityDesc:
-      '与「开始」页的「中转站优先」按钮是同一份状态：打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过 WorkBuddy。需要 WorkBuddy 桌面端主进程在运行。',
+      '打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过 WorkBuddy。需要 WorkBuddy 桌面端主进程在运行。',
     procRunning: 'WorkBuddy 主进程：运行中',
     procStopped: 'WorkBuddy 主进程：未检测到',
     noProcess: '未检测到Workbuddy',
     enabledOn: '已开启：桌宠优先走 WorkBuddy 模型',
     enabledOff: '已关闭：桌宠跳过 WorkBuddy',
-    hostOk: '开始页按钮：已注入',
-    hostBroken: '开始页按钮：未注入（宿主升级可能覆盖了控制台文件）',
-    hostUnknown: '开始页按钮：状态未知',
-    repair: '重新注入开始页按钮',
-    repairing: '正在重新注入…',
-    repaired: '已修复，重新打开控制台即可看到按钮',
-    repairFail: '修复失败',
     usageTitle: '用量',
     usageDesc:
       '本机记账的调用用量与 WorkBuddy 积分包余额。积分取上游每次调用回传的真实扣费（可能为 0），倍率按目录 + 限时优惠实时计算。',
@@ -136,13 +129,6 @@ const TEXT = {
     noProcess: 'Workbuddy not detected',
     enabledOn: 'On: the pet asks WorkBuddy first',
     enabledOff: 'Off: the pet skips WorkBuddy',
-    hostOk: 'Home button: injected',
-    hostBroken: 'Home button: not injected (a host update may have replaced the console files)',
-    hostUnknown: 'Home button: unknown',
-    repair: 'Re-inject the home button',
-    repairing: 'Re-injecting…',
-    repaired: 'Fixed. Reopen the console to see the button',
-    repairFail: 'Repair failed',
     usageTitle: 'Usage',
     usageDesc:
       'Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.',
@@ -489,43 +475,12 @@ function mountPriority(ctx) {
   ctx.root.append(sheet.el);
 
   const statusLine = ui.msgline();
-  // 开始页按钮挂在宿主控制台里：宿主升级会把 build/console 覆盖掉，这里给个状态 + 一键补回。
-  const hostLine = ui.msgline();
-  const hostBar = ui.actions();
-  const repairBtn = ui.button(s.repair, {
-    size: 'sm',
-    variant: 'plain',
-    onClick: async () => {
-      repairBtn.disabled = true;
-      hostLine.textContent = s.repairing;
-      try {
-        const r = await ctx.invoke('repair');
-        hostLine.textContent = r?.ok ? s.repaired : `${s.repairFail}：${r?.error ?? r?.hostUi?.reason ?? ''}`;
-        ui.toast(r?.ok ? s.repaired : s.repairFail, r?.ok ? 'ok' : 'bad');
-        await load();
-      } catch (err) {
-        hostLine.textContent = `${s.repairFail}：${String(err?.message ?? err)}`;
-        ui.toast(s.repairFail, 'bad');
-      } finally {
-        repairBtn.disabled = false;
-      }
-    },
-  });
-  hostBar.append(repairBtn);
 
   /** 用服务端状态刷新界面（不触发 onChange）。 */
   function apply(r) {
     if (!r) return;
     box.setChecked(r.prefer === true);
     statusLine.textContent = r.running ? s.procRunning : s.procStopped;
-    const host = r.hostUi;
-    if (!host) {
-      hostLine.textContent = s.hostUnknown;
-      hostBar.style.display = 'none';
-      return;
-    }
-    hostLine.textContent = host.ok ? s.hostOk : `${s.hostBroken}（${host.label ?? host.reason}）`;
-    hostBar.style.display = host.ok ? 'none' : '';
   }
 
   const box = ui.checkbox(s.priorityLabel, {
@@ -549,7 +504,7 @@ function mountPriority(ctx) {
       }
     },
   });
-  sheet.body.append(box.el, statusLine, hostLine, hostBar);
+  sheet.body.append(box.el, statusLine);
 
   async function load() {
     apply(await ctx.invoke('state'));
@@ -694,7 +649,9 @@ function mountUsage(ctx) {
       recentTable.addRow([
         when,
         r.model ?? '—',
-        fmtNum(r.totalTokens ?? (r.promptTokens ?? 0) + (r.completionTokens ?? 0)),
+        // 账本里的字段名就是 total/prompt/completion（不是 totalTokens），
+        // 以前这里恒读出 0，最近调用表的 token 列一直是 0。
+        fmtNum(r.total ?? (r.prompt ?? 0) + (r.completion ?? 0)),
         r.ok === false ? '—' : fmtNum(r.credit),
         typeof r.durationMs === 'number' ? `${r.durationMs} ms` : '—',
       ]);

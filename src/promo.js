@@ -38,21 +38,54 @@ export function minutesOfClock(value) {
 }
 
 /** 在 `timeZone` 里、`nowMs` 时刻是当天第几分钟。时区不可用时退回 UTC，而不是抛错。 */
+function minutesInZone(nowMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs));
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return undefined;
+  return hour * 60 + minute;
+}
+
+/**
+ * 某时区此刻的「当天分钟数」。
+ *
+ * 上层传进来的时区可能不合法（上游偶尔给 'Asia/Shanghai ' 这种带空格的写法，
+ * 或者干脆给个拼错的区名）。这时退回 UTC 继续判定，绝不像以前那样直接返回 0——
+ * 返回 0 等于把所有活动都当成「在 00:00 生效」，过期促销会被误判成正在打折。
+ */
 export function zonedMinutes(nowMs, timeZone) {
+  const wanted = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : 'UTC';
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timeZone ?? 'UTC',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(new Date(nowMs));
-    const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
-    const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return 0;
-    return hour * 60 + minute;
+    return minutesInZone(nowMs, wanted) ?? NaN;
   } catch {
-    return 0;
+    try {
+      return minutesInZone(nowMs, 'UTC') ?? NaN;
+    } catch {
+      return NaN;
+    }
   }
+}
+
+/**
+ * 把上游给的时间点归一成毫秒时间戳。
+ * 数字也认（< 1e12 视为 Unix 秒），字符串则先试纯数字再试 Date.parse。
+ */
+export function timestampOf(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const text = value.trim();
+    if (/^\d+(?:\.\d+)?$/.test(text)) return timestampOf(Number(text));
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 /** 是否落在任一每日时段内（支持跨零点的 23:00→7:50）。 */
@@ -104,7 +137,8 @@ export function hasSchedule(promo) {
 export function multiplierOfText(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : undefined;
   if (typeof value !== 'string') return undefined;
-  const stripped = value.trim().replace(/x$/i, '').trim();
+  // 上游把倍率写成 `"x0.11"`，也见过 `"0.11x"`；两种前缀/后缀都剥掉。
+  const stripped = value.trim().replace(/^x/i, '').replace(/x$/i, '').trim();
   if (stripped === '') return undefined;
   const parsed = Number(stripped);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
@@ -114,19 +148,35 @@ export function multiplierOfText(value) {
  * 此刻应当**画在界面上**的倍率：`priority` 高者优先，同为促销时「促销」优先于「会员档」；
  * 只认有可用折扣、且此刻生效的条目。没有则返回 undefined（沿用目录价）。
  */
-export function selectPromoMultiplier(promos, nowMs) {
-  if (!Array.isArray(promos) || promos.length === 0) return undefined;
-  const sorted = [...promos].sort(
+function sortByPriority(promos) {
+  return [...promos].sort(
     (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.source === b.source ? 0 : a.source === 'promotion' ? -1 : 1),
   );
-  for (const promo of sorted) {
+}
+
+/**
+ * 此刻真正改价的那条促销。
+ *
+ * 以前 selectPromoMultiplier() 只返回倍率、priceViewOf() 又去重新挑一条「优先级最高」的
+ * 活动来读 promoId/windowText：当高优先级那条只有徽标没有折扣时，面板就会显示
+ * 「倍率取自 A、时段取自 B」的错配。这里把「哪条活动改的价」和「价是多少」绑在一起返回。
+ * @returns {{ promo: Record<string, any>, multiplier: number } | undefined}
+ */
+export function selectPromoDiscount(promos, nowMs) {
+  if (!Array.isArray(promos) || promos.length === 0) return undefined;
+  for (const promo of sortByPriority(promos)) {
     const discount = promo.discount;
     if (discount === undefined || discount.multiplier === undefined) continue;
     if (discount.displayMode !== 'replace' && discount.displayMode !== 'strikethrough') continue;
     if (!promoActiveAt(promo, nowMs)) continue;
-    return discount.multiplier;
+    return { promo, multiplier: discount.multiplier };
   }
   return undefined;
+}
+
+/** 此刻生效的倍率（没有活动命中时返回 undefined，交给调用方回落目录价）。 */
+export function selectPromoMultiplier(promos, nowMs) {
+  return selectPromoDiscount(promos, nowMs)?.multiplier;
 }
 
 /**
@@ -135,9 +185,7 @@ export function selectPromoMultiplier(promos, nowMs) {
  */
 export function selectPromoBadge(promos, nowMs) {
   if (!Array.isArray(promos) || promos.length === 0) return undefined;
-  const sorted = [...promos].sort(
-    (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.source === b.source ? 0 : a.source === 'promotion' ? -1 : 1),
-  );
+  const sorted = sortByPriority(promos);
   const running = sorted.find((promo) => hasSchedule(promo) && promoActiveAt(promo, nowMs));
   if (running !== undefined) return running;
   return sorted.find(
@@ -201,8 +249,8 @@ function parseDiscount(raw) {
 export function parseSchedule(raw) {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const timezone = typeof raw.timezone === 'string' && raw.timezone !== '' ? raw.timezone : undefined;
-  const validFrom = typeof raw.validFrom === 'string' ? Date.parse(raw.validFrom) : undefined;
-  const validUntil = typeof raw.validUntil === 'string' ? Date.parse(raw.validUntil) : undefined;
+  const validFrom = timestampOf(raw.validFrom);
+  const validUntil = timestampOf(raw.validUntil);
   const daily = Array.isArray(raw.daily)
     ? raw.daily
         .map((w) => ({ start: w?.start, end: w?.end }))
@@ -237,10 +285,12 @@ function parsePromo(raw, source) {
     typeof raw.badge?.label === 'string' ? raw.badge.label : typeof raw.badge?.shortLabel === 'string' ? raw.badge.shortLabel : '';
   const hoverText =
     typeof raw.hover?.textZh === 'string' ? raw.hover.textZh : typeof raw.hover?.textEn === 'string' ? raw.hover.textEn : '';
-  if (badgeLabel === '' && hoverText === '') return undefined;
-  const id = typeof raw.id === 'string' && raw.id !== '' ? raw.id : `${source}:${modelIds.join(',')}`;
+  // 以前这里只看 badge / hover：一条只改价、没有文案的促销会被整条丢掉，
+  // 于是「某模型某时段打折」静默失效。现在 discount 也算有效内容。
   const schedule = parseSchedule(raw.schedule);
   const discount = parseDiscount(raw.discount);
+  if (badgeLabel === '' && hoverText === '' && discount === undefined) return undefined;
+  const id = typeof raw.id === 'string' && raw.id !== '' ? raw.id : `${source}:${modelIds.join(',')}`;
   return {
     id,
     source,
@@ -300,22 +350,30 @@ export function attachPromos(models, promos) {
  */
 export function priceViewOf(model, nowMs) {
   const base = model?.creditMultiplier ?? multiplierOfText(model?.credits);
-  const promos = model?.promos ?? [];
-  const effective = selectPromoMultiplier(promos, nowMs);
+  const promos = Array.isArray(model?.promos) ? model.promos : [];
+  // 只认「真的改了价」的那条：它的倍率、时段、折扣文案必须同源，
+  // 否则会出现「倍率来自夜间折扣、时段文案来自另一个只有徽标的活动」这种错配。
+  const chosen = selectPromoDiscount(promos, nowMs);
   const badgePromo = selectPromoBadge(promos, nowMs);
-  const activePromo = promos.filter((p) => promoActiveAt(p, nowMs)).sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
-  const windowText = activePromo !== undefined && hasSchedule(activePromo) ? dailyWindowText(activePromo) : '';
-  const absoluteText = activePromo !== undefined && hasSchedule(activePromo) ? absoluteWindowText(activePromo) : '';
+  const effective = chosen === undefined ? base : chosen.multiplier;
+  // 没有改价活动时，时段文案退回当前生效的活动（例如只有徽标、只做展示的那种）。
+  const windowPromo = chosen?.promo ?? sortByPriority(promos.filter((p) => promoActiveAt(p, nowMs)))[0];
+  const windowText = windowPromo !== undefined && hasSchedule(windowPromo) ? dailyWindowText(windowPromo) : '';
+  const absoluteText = windowPromo !== undefined && hasSchedule(windowPromo) ? absoluteWindowText(windowPromo) : '';
+  const discounted =
+    chosen !== undefined && typeof base === 'number' && typeof effective === 'number' && effective < base;
   return {
     base,
-    effective: effective ?? base,
-    promoId: effective === undefined ? undefined : activePromo?.id,
+    effective,
+    /** 是否真的比目录价便宜（0 元活动也算便宜，只要目录价 > 0）。 */
+    discounted,
+    promoId: chosen?.promo?.id,
     badge: badgePromo?.badge?.label,
     badgeActive: badgePromo !== undefined && promoActiveAt(badgePromo, nowMs),
     windowText,
     absoluteText,
     hoverText: badgePromo?.hoverText,
-    discount: effective === undefined ? undefined : discountText(activePromo),
-    isFree: (effective ?? base) === 0,
+    discount: chosen === undefined ? undefined : discountText(chosen.promo),
+    isFree: effective === 0,
   };
 }

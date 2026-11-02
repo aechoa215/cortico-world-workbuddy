@@ -347,6 +347,9 @@ export function fetchAtRestKeyPayload() {
 }
 
 let cachedKeyPayload;
+let cachedKeyAt = 0;
+/** 密钥缓存的存活时间：桌面端轮换密钥时最多晚一分钟跟上。 */
+const KEY_CACHE_MS = 60_000;
 
 /**
  * 解凭据：明文直接用；加密字段先试环境变量里的密钥，再问桌面端要一次（进程内缓存）。
@@ -356,8 +359,13 @@ let cachedKeyPayload;
 export async function resolveTokensWithKey(credential) {
   const plain = resolveTokens(credential);
   if (plain.accessToken || !credential.encryptedFields?.accessToken) return plain;
-  if (cachedKeyPayload === undefined) {
+  // 只把「真的拿到了密钥」当成缓存：
+  // 以前拿到 null 也写进缓存，于是用户装好/登录桌面端之后，扩展还得重启才认得凭据。
+  // 现在失败结果按 60 秒过期，成功结果也按 60 秒刷新（桌面端轮换密钥时能跟上）。
+  const fresh = cachedKeyPayload && Date.now() - cachedKeyAt < KEY_CACHE_MS;
+  if (!fresh) {
     cachedKeyPayload = await fetchAtRestKeyPayload();
+    cachedKeyAt = Date.now();
   }
   if (!cachedKeyPayload) return plain;
   return resolveTokens(credential, cachedKeyPayload);
