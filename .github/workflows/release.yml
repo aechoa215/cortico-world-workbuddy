@@ -1,0 +1,67 @@
+name: Release
+
+# 打 tag（v0.1.6 这种）就自动构建 + 发布到 npm。
+# 也可以在 Actions 页面手动 Run workflow（此时跳过 tag 校验，但仍要求版本未发布）。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # 先给出人话报错，而不是让人对着 401 猜。
+      - name: Guard NPM_TOKEN
+        shell: bash
+        run: |
+          set -e
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::error::仓库 secret NPM_TOKEN 未配置。请到 Settings → Secrets and variables → Actions 添加一个 npm Automation token。"
+            exit 1
+          fi
+
+      # 零运行时依赖，devDependencies 只有 esbuild。
+      - name: Install devDependencies
+        run: npm install --no-audit --no-fund
+
+      # dist 必须是源码的真实产物：发布出去的客户端不许是旧货。
+      - name: Build webui and verify dist is up to date
+        shell: bash
+        run: |
+          set -e
+          npm run build:web
+          git diff --exit-code -- dist/ || {
+            echo "::error::dist/webui.js 与 src/webui/client.js 不同步，请在本机跑 npm run build:web 后提交"
+            exit 1
+          }
+
+      # 版本号必须与 tag 一致，避免 v0.1.6 的 tag 发出 0.1.5 的包。
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package.json=$VER"
+          [ "$TAG" = "$VER" ] || {
+            echo "::error::tag ($TAG) 与 package.json 版本 ($VER) 不一致"
+            exit 1
+          }
+
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
