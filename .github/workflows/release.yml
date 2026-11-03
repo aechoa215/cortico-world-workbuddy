@@ -1,7 +1,10 @@
 name: Release
 
-# 打 tag（v0.1.6 这种）就自动构建 + 发布到 npm。
-# 也可以在 Actions 页面手动 Run workflow（此时跳过 tag 校验，但仍要求版本未发布）。
+# 打 tag（v0.3.1 这种）就自动构建 + 发布到 npm，也可以在 Actions 页面手动 Run workflow。
+#
+# 0.3.1 修复（审查报告第 5 条）：0.3.0 的 ci.yml 与 release.yml 都监听 v* tag，
+# 但 Release 没有 needs / workflow_run 依赖 CI —— 打 tag 时 CI 的 contract / selfcheck
+# 即使红叉，npm publish 照样执行。现在同一条流水线里先跑 verify，publish 用 needs 依赖它。
 on:
   push:
     tags: ['v*']
@@ -11,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: publish to npm
+  verify:
+    name: verify before publish
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,34 +23,37 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
 
-      # 先给出人话报错，而不是让人对着 401 猜。
-      - name: Guard NPM_TOKEN
+      - name: Install devDependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax check
         shell: bash
         run: |
           set -e
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "::error::仓库 secret NPM_TOKEN 未配置。请到 Settings → Secrets and variables → Actions 添加一个 npm Automation token。"
-            exit 1
-          fi
+          for f in src/*.js src/webui/*.js scripts/*.mjs scripts/lib/*.mjs; do
+            node --check "$f"
+          done
 
-      # 零运行时依赖，devDependencies 只有 esbuild。
-      - name: Install devDependencies
-        run: npm ci --no-audit --no-fund
+      - name: Contract assertions + describe.json
+        run: |
+          node scripts/contract.mjs
+          node scripts/gen-describe.mjs --check
 
-      # dist 必须是源码的真实产物：发布出去的客户端不许是旧货。
       - name: Build webui and verify dist is up to date
         shell: bash
         run: |
           set -e
-          npm run build:web
+          node scripts/build-web.mjs --strict
           git diff --exit-code -- dist/ || {
             echo "::error::dist/webui.js 与 src/webui/client.js 不同步，请在本机跑 npm run build:web 后提交"
             exit 1
           }
 
-      # 版本号必须与 tag 一致，避免 v0.1.6 的 tag 发出 0.1.5 的包。
+      - name: Extension selfcheck
+        run: node scripts/selfcheck.mjs --allow-missing-host
+
+      # 版本号必须与 tag 一致，避免 v0.3.1 的 tag 发出 0.3.0 的包。
       - name: Check tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -61,6 +67,32 @@ jobs:
             exit 1
           }
 
+  publish:
+    name: publish to npm
+    # 关键：verify 没过，这个 job 根本不会启动。
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Guard NPM_TOKEN
+        shell: bash
+        run: |
+          set -e
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::error::仓库 secret NPM_TOKEN 未配置。请到 Settings → Secrets and variables → Actions 添加一个 npm Automation token。"
+            exit 1
+          fi
+
+      - name: Install devDependencies
+        run: npm install --no-audit --no-fund
+
+      # prepack 会跑 build-web.mjs --strict 重建 dist；这里再核一次 tag/版本由 verify 保证。
       - name: Publish
         run: npm publish --access public
         env:

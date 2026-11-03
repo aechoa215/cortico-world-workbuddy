@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-workbuddy",
-  "version": "0.3.0",
+  "version": "0.3.4",
   "type": "module",
   "description": "把 Windows 端已登录的 WorkBuddy 客户端模型桥接进 Coopanion：读取本机登录态，列出模型目录与默认积分倍率，供 Coo 调用。",
   "license": "MIT",
@@ -33,7 +33,7 @@
     "locales": {
       "zh": {
         "displayName": "WorkBuddy 桥接",
-        "description": "把本机已登录的 WorkBuddy 客户端（国内版 / 国际版）模型接入 Coopanion，面板中可选模型并显示其默认积分倍率。"
+        "description": "把本机已登录的 WorkBuddy 客户端模型接入 Coopanion，面板中可选模型并显示其默认积分倍率。"
       },
       "en": {
         "displayName": "WorkBuddy Bridge",
@@ -78,6 +78,6 @@
     "win32"
   ],
   "devDependencies": {
-    "esbuild": "^0.24.2"
+    "esbuild": "0.28.2"
   }
 }

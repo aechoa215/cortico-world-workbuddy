@@ -4,31 +4,27 @@
  */
 
 /**
- * @typedef {'cn' | 'global'} WbRegion
  * @typedef {object} WbConfigSection
  * @property {boolean} enabled
- * @property {WbRegion} region 国内版 / 国际版。
  * @property {string} model 当前选用的模型 id；空串 = 未选择。
  * @property {string} credentialsDir 自定义凭据目录（留空 = 自动发现）。
- * @property {string} baseUrl 自定义上游 base URL（留空 = 按 region 取官方域名）。
+ * @property {string} baseUrl 自定义上游 base URL（留空 = WorkBuddy 官方域名）。
  * @property {number} maxTokens 单次 wb_chat 的最大输出 token。
  * @property {boolean} envPrompt 是否把桥接状态写进 system 前缀的环境段。
- * @property {boolean} prefer 「中转站优先」：桌宠每轮对话是否先走 WorkBuddy 模型。默认关。
  * @property {boolean} safeOnly 只允许调用安全清单内的公开对话模型。默认开。
  * 注意：手动粘贴的 access token 走 ctx.storeSecret()，不落配置。
- * 0.3.0 起不再有 hostInject：扩展不再改写宿主任何文件，「中转站优先」只在 World 详情页开关。
+ * 0.3.0 起不再有 hostInject：扩展不再改写宿主任何文件。
+ * 0.3.2 起只桥接本机已登录的 WorkBuddy 客户端。
+ * 0.3.4 起移除「中转站优先」开关：wb_* 工具按需调用，不再每轮强制走 WorkBuddy。
  */
 
 export const WB_DEFAULTS = {
   enabled: false,
-  region: 'cn',
   model: '',
   credentialsDir: '',
   baseUrl: '',
   maxTokens: 2048,
   envPrompt: true,
-  /** 由 World 详情页开关写入（0.3.0 起不再有开始页按钮）。 */
-  prefer: false,
   /**
    * 只允许调用 WorkBuddy 公开对话模型（安全清单）。
    * 关掉后能用 disabled / 内部别名 / 预览等模型，但那属于「已知会违反对方使用建议」的操作，
@@ -45,13 +41,6 @@ export const WB_CONFIG_GROUP = {
     type: 'object',
     title: 'WorkBuddy 桥接',
     properties: {
-      'worlds.workbuddy.region': {
-        type: 'string',
-        title: '区域',
-        description: '国内版（copilot.tencent.com）或国际版（workbuddy.ai），按你登录的客户端选择。改动后需重新读取模型目录。',
-        enum: ['cn', 'global'],
-        'x-hot': true,
-      },
       'worlds.workbuddy.model': {
         type: 'string',
         title: '当前模型',
@@ -67,7 +56,7 @@ export const WB_CONFIG_GROUP = {
       'worlds.workbuddy.baseUrl': {
         type: 'string',
         title: '上游地址（可选）',
-        description: '自定义 WorkBuddy 上游 base URL，留空按区域取官方域名。代理 / 中转场景使用；改完重启生效。',
+        description: '自定义 WorkBuddy 上游 base URL，留空使用WorkBuddy 官方域名（copilot.tencent.com）。代理 / 中转场景使用；改完重启生效。',
         'x-hot': false,
       },
       'worlds.workbuddy.maxTokens': {

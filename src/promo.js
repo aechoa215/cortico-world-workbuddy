@@ -23,6 +23,9 @@
  *   没有可用折扣的促销（只有徽标，例如「订阅优先」）不改变倍率。
  */
 
+/** WorkBuddy 未声明时区时的默认活动时区。 */
+export const DEFAULT_TIMEZONE = 'Asia/Shanghai';
+
 /** `'HH:mm'` → 当天分钟数；`24:00` 表示 1440（一天的终点）。 */
 export function minutesOfClock(value) {
   if (typeof value !== 'string') return undefined;
@@ -59,7 +62,7 @@ function minutesInZone(nowMs, timeZone) {
  * 返回 0 等于把所有活动都当成「在 00:00 生效」，过期促销会被误判成正在打折。
  */
 export function zonedMinutes(nowMs, timeZone) {
-  const wanted = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : 'UTC';
+  const wanted = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : DEFAULT_TIMEZONE;
   try {
     return minutesInZone(nowMs, wanted) ?? NaN;
   } catch {
@@ -71,17 +74,55 @@ export function zonedMinutes(nowMs, timeZone) {
   }
 }
 
+/** 把 YYYY-MM-DD 的当地午夜换算成时间戳；非法时区沿用每日时段的 UTC 回退。 */
+function zonedDateTimestamp(year, month, day, timeZone) {
+  const target = Date.UTC(year, month - 1, day);
+  const wanted = typeof timeZone === 'string' && timeZone.trim() !== '' ? timeZone.trim() : DEFAULT_TIMEZONE;
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: wanted,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    });
+  } catch {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    });
+  }
+  let guess = target;
+  // 先按 UTC 猜，再用该时区偏移修正；迭代两次可覆盖 DST 切换前后的偏移变化。
+  for (let i = 0; i < 2; i += 1) {
+    const parts = formatter.formatToParts(new Date(guess));
+    const get = (type) => Number(parts.find((p) => p.type === type)?.value);
+    const localAsUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+    guess = target - (localAsUtc - guess);
+  }
+  return guess;
+}
+
 /**
  * 把上游给的时间点归一成毫秒时间戳。
- * 数字也认（< 1e12 视为 Unix 秒），字符串则先试纯数字再试 Date.parse。
+ * 数字也认（< 1e12 视为 Unix 秒）；纯日期按活动时区解释，validUntil 含当天整日。
  */
-export function timestampOf(value) {
+export function timestampOf(value, timeZone, endOfDay = false) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
   }
   if (typeof value === 'string' && value.trim() !== '') {
     const text = value.trim();
     if (/^\d+(?:\.\d+)?$/.test(text)) return timestampOf(Number(text));
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+    if (dateOnly) {
+      const year = Number(dateOnly[1]);
+      const month = Number(dateOnly[2]);
+      const day = Number(dateOnly[3]);
+      const check = new Date(Date.UTC(year, month - 1, day));
+      if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return undefined;
+      return zonedDateTimestamp(year, month, day + (endOfDay ? 1 : 0), timeZone);
+    }
     const parsed = Date.parse(text);
     return Number.isFinite(parsed) ? parsed : undefined;
   }
@@ -212,10 +253,12 @@ export function absoluteWindowText(promo, formatDate) {
   const fmt = formatDate ?? ((ms) => new Date(ms).toISOString().slice(0, 10));
   const from = schedule?.validFrom;
   const until = schedule?.validUntil;
+  // 纯日期的 validUntil 在内部存成次日 00:00（排他边界），展示仍用上游写的当天日期。
+  const untilText = schedule?.validUntilDate ?? (until === undefined ? undefined : fmt(until));
   if (from === undefined && until === undefined) return '';
-  if (from !== undefined && until !== undefined) return `${fmt(from)} ~ ${fmt(until)}`;
+  if (from !== undefined && until !== undefined) return `${fmt(from)} ~ ${untilText}`;
   if (from !== undefined) return `${fmt(from)} 起`;
-  return `至 ${fmt(until)}`;
+  return `至 ${untilText}`;
 }
 
 /** 折扣文案：`5 折（0.50x）`、`免费（0x）`。 */
@@ -249,14 +292,22 @@ function parseDiscount(raw) {
 export function parseSchedule(raw) {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const timezone = typeof raw.timezone === 'string' && raw.timezone !== '' ? raw.timezone : undefined;
-  const validFrom = timestampOf(raw.validFrom);
-  const validUntil = timestampOf(raw.validUntil);
-  const daily = Array.isArray(raw.daily)
-    ? raw.daily
-        .map((w) => ({ start: w?.start, end: w?.end }))
-        .filter((w) => minutesOfClock(w.start) !== undefined && minutesOfClock(w.end) !== undefined)
+  const validFrom = timestampOf(raw.validFrom, timezone);
+  const validUntil = timestampOf(raw.validUntil, timezone, true);
+  const validUntilDate = typeof raw.validUntil === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.validUntil.trim())
+    ? raw.validUntil.trim()
     : undefined;
-  const dailyUnusable = daily === undefined && Array.isArray(raw.daily) && raw.daily.length > 0;
+  const rawDaily = Array.isArray(raw.daily) ? raw.daily : undefined;
+  const daily =
+    rawDaily === undefined
+      ? undefined
+      : rawDaily
+          .map((w) => ({ start: w?.start, end: w?.end }))
+          .filter((w) => minutesOfClock(w.start) !== undefined && minutesOfClock(w.end) !== undefined);
+  // 上游确实给了时段、但一条都解析不出来时，绝不能当成「没有时段限制」全时段生效。
+  // 0.3.0 写成 `daily === undefined && ...`，而过滤后得到的是空数组 []，判定恒为 false，
+  // 于是把写错的时段当作全天打折（审查报告第 2 条）。
+  const dailyUnusable = rawDaily !== undefined && rawDaily.length > 0 && (daily === undefined || daily.length === 0);
   if (
     timezone === undefined &&
     validFrom === undefined &&
@@ -270,6 +321,7 @@ export function parseSchedule(raw) {
     ...(timezone === undefined ? {} : { timezone }),
     ...(validFrom === undefined || Number.isNaN(validFrom) ? {} : { validFrom }),
     ...(validUntil === undefined || Number.isNaN(validUntil) ? {} : { validUntil }),
+    ...(validUntilDate === undefined || validUntil === undefined ? {} : { validUntilDate }),
     ...(daily === undefined ? {} : { daily }),
     ...(dailyUnusable ? { dailyUnusable: true } : {}),
   };

@@ -1,6 +1,6 @@
 # cortico-world-workbuddy
 
-把 **本机已登录的 WorkBuddy 客户端**（国内版 / 国际版）的模型桥接进
+把 **本机已登录的 WorkBuddy 客户端**的模型桥接进
 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion) 桌宠：Coo 可以直接调用你
 WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看每个模型的
 **默认积分倍率**（如 `x0.79`）并点选要用的模型；World 详情页有一个「是否启用Workbuddy」
@@ -14,7 +14,7 @@ WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看�
 > 按上游给出的倍率真实扣费；扩展不提供账号、不共享凭据、不绕过计费。
 > 请自行评估账号风险，官方 WorkBuddy 客户端始终是最安全的选择。
 
-## 安装（0.3.0，Coopanion 0.2.17 实机验证）
+## 安装（0.3.4，Coopanion 0.2.17 实机验证）
 
 一条命令（推荐，脚本会做完打包、装卸、哈希与版本校验）：
 
@@ -32,7 +32,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
    cd "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\extensions"
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" remove cortico-world-workbuddy
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" `
-     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.0.tgz" `
+     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.4.tgz" `
      --config.strict-dep-builds=false `
      --store-dir "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\pnpm\store\v11"
    ```
@@ -43,9 +43,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
 
    ```json
    "workbuddy": {
-     "enabled": true, "region": "cn", "model": "deepseek-v4.1-flash",
+     "enabled": true, "model": "deepseek-v4.1-flash",
      "credentialsDir": "", "baseUrl": "", "maxTokens": 2048,
-     "envPrompt": true, "prefer": false
+     "envPrompt": true
    }
    ```
 
@@ -63,13 +63,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
 
 ## 卸载与还原
 
-- **只卸扩展**：在「World 扩展」里卸载 / 或 `pnpm remove cortico-world-workbuddy`。
-  详情页入口随之消失，桌宠工具表里也不再有 `wb_*`——Coopanion 主体不受影响。
-- **不碰宿主文件**：0.3.0 起扩展**不再往 Coopanion 主界面注入任何脚本或按钮**，
-  `resources\app` 下一个字节都不会被改写，卸载后不需要还原任何东西。
-- **旧版本残留**：如果装过 0.2.x，宿主 `build\console\` 里可能还留着 `workbuddy-home.js`
-  与 `index.html` 里的一行引用；删掉那个文件、去掉 `index.html` 里
-  `<script type="module" src="./workbuddy-home.js"></script>` 这一行即可。
+1. 在「World 扩展」里卸载，或执行 `pnpm remove cortico-world-workbuddy`，然后重启 Coopanion。
+   详情页入口与 `wb_*` 工具随之消失，Coopanion 主体和其他 World 不受影响。
+2. 宿主的卸载接口只删除扩展包，不会调用扩展清理逻辑，也不会删除部署配置和账本。
+   因此在源码目录再执行一次显式清理（先检查、后清理）：
+
+   ```bash
+   node scripts/clean-workbuddy.mjs --check
+   node scripts/clean-workbuddy.mjs --clean
+   ```
+
+   清理范围只有：`config.json` 的 `worlds.workbuddy` 块、`.env` 的 `accessToken` 行
+   （真实 token 或 `wb-cleared` / `wb-auto` 哨兵），以及数据目录里的
+   `workbuddy-usage.jsonl`、`workbuddy-catalog.json`、`workbuddy-balance.json`。
+   其他配置、其他密钥和宿主文件不动，命令输出也不会显示 token。
+- **不碰宿主程序文件**：0.3.0 起扩展不再往 Coopanion 主界面注入脚本或按钮，
+  `resources\app` 不会被改写。普通 `stop()` / 重启不会删除账本；只有上面的显式卸载清理会删。
+- **旧版本残留（0.2.x → 0.3.x）**：装过 0.2.x 的机器，另外执行
+  `node scripts/clean-legacy-injection.mjs --check` 并按结果使用 `--clean`，清除旧版留在
+  `build\console\` 的注入行、脚本与备份；脚本不覆盖 `index.html` 的其他内容。
 
 ## 工作原理
 
@@ -82,10 +94,9 @@ Coopanion (Coo)
        ├─ 上游客户端 copilot.tencent.com（对话）/ www.codebuddy.cn（计费）
        │    ├─ GET  /v3/config                              模型目录 + 促销（models / modelPromotions / modelTiers）
        │    ├─ POST /v2/chat/completions                     对话（SSE 流式）
-       │    ├─ POST /v2/auth/refresh                         刷新 token（X-Refresh-Token）
        │    └─ POST /v2/billing/meter/get-user-resource      积分余额（只读）
        ├─ 工具        wb_list_models / wb_select_model / wb_chat / wb_credits
-       └─ WebUI 面板  模型目录、账号、是否启用 WorkBuddy（中转站优先）
+       └─ WebUI 面板  模型目录（含只读主进程状态）、账号、用量与成本
 ```
 
 - **主进程检测**：桌面端的渲染进程都是主进程的子进程，所以「有 `WorkBuddy.exe`」等价于
@@ -98,34 +109,31 @@ Coopanion (Coo)
   token 只经 `ctx.storeSecret()` 进部署的密钥库，**不写配置、不进日志、面板只显示掩码**。
 - **积分倍率**：完全来自上游目录的 `credits` 字段，扩展不写死；刷新后缓存到
   `workbuddy-catalog.json`，重启不丢。
-- **区域**：国内版 `copilot.tencent.com` 与国际版 `www.workbuddy.ai` 是两个上游；
-  计费域国内是 `www.codebuddy.cn`。切 `worlds.workbuddy.region` 后重新刷新目录。
+- **登录态失效**：`/v3/config` 返回 401/403 时直接判 `session_dead` 并清掉本次 token；
+  下一次调用重新从本机凭据发现（桌面端自行刷新落盘）。本扩展不调用刷新接口，
+  chat 请求也绝不携带 refresh token。
+- **上游**：目录与对话固定走 `copilot.tencent.com`，积分余额走 `www.codebuddy.cn`。
+  本扩展只支持这一套上游（本机已登录的 WorkBuddy 桌面端）；配了自定义 `baseUrl` 时两个域都由它替换。
 
-## 「中转站优先」开关
+## 主进程状态与按需调用
 
-一份状态（`worlds.workbuddy.prefer`），一个入口，默认是**关**：
+0.3.4 起没有「中转站优先」开关，也没有任何「每轮强制走 WorkBuddy」的行为：
 
-| 入口 | 位置 | 行为 |
-|---|---|---|
-| 详情页开关 | 「World 扩展」→ WorkBuddy 桥接 →「是否启用Workbuddy」 | 勾选＝开；取消＝关 |
-
-> 0.3.0 起**不再往主界面「开始」页注入「中转站优先」按钮**（也就不需要改宿主文件）。
-> 想快速开关，把它当书签存一下 World 详情页即可。
-
-- 开 → 环境提示词告诉 Coo：每轮对话先 `wb_chat`（用 `worlds.workbuddy.model`），
-  再把回答用自己的话讲出来并说明是哪个模型答的。
-- 关 → Coo 完全不碰 `wb_*`（用户明确点名 WorkBuddy 时除外）。
-- 打开时若没检测到主进程：不会把开关打开，面板提示「未检测到Workbuddy」。
-- 主进程在 6 秒轮询里退出时，开关自动熄灭，避免亮着却调不通。
+- 「模型目录」面板顶部只读显示 WorkBuddy 主进程是否在跑（6 秒轮询，翻转时才推送）；
+  勾选框已删除，状态不参与任何开关逻辑。
+- `wb_*` 工具由 Coo 按需调用：用户点名 WorkBuddy、或某个 WorkBuddy 模型明显更合适时才用。
+  不调用就不花积分——这是「每个调用都真实扣积分」的默认前提。
+- 环境提示词只描述事实（登录态、模型、倍率、主进程状态、今日用量）和工具用法，
+  不再命令「每轮先 `wb_chat`」。
+- 主进程退出时面板状态会变成「未检测到」，工具调用直接返回明确错误，不需要切换任何开关。
 
 ## 面板
 
 | 面板 | 内容 |
 |---|---|
-| 模型目录 | 刷新目录；逐模型一行：名称/id、**合规档位**、**此刻倍率**（含限时折扣时显示 `x0.5 ← x0.79 23:00–07:50`，x0 标「免费」）、上下文、推理档、「选用」按钮；默认只列安全清单，勾选「显示全部模型（含不建议项）」才展开其余项 |
+| 模型目录 | 顶部只读显示 WorkBuddy 主进程状态；刷新目录；逐模型一行：名称/id、**合规档位**、**此刻倍率**（含限时折扣时显示 `x0.5 ← x0.79 23:00–07:50`，x0 标「免费」）、上下文、推理档、「选用」按钮；默认只列安全清单，勾选「显示全部模型（含不建议项）」才展开其余项 |
 | 账号 | 登录态来源（本机发现 / 手动）、掩码 token、积分余额查询、重新检测、手动 token 存取 |
-| 是否启用 WorkBuddy | 「中转站优先」开关 + WorkBuddy 主进程状态 |
-| 用量 | 区间概览（今天 / 近 7 天 / 近 30 天）、按模型聚合、积分包明细、限时优惠清单、最近调用；带「刷新余额」「清空本地账本」 |
+| 用量与成本 | 区间概览（今天 / 近 7 天 / 近 30 天 / 全部，列：调用、失败、积分、输入/输出/缓存命中/合计 token）、按模型近 30 天聚合、积分包明细、限时优惠清单、最近调用；带「刷新余额」「清空本地账本」 |
 
 ### 安全清单（合规闸门）
 
@@ -152,8 +160,9 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 
 - 目录来自 `GET /v3/config`（应用身份 UA）：一次同时拿到 `models`、`modelPromotions`、`modelTiers`。
   用 CLI 身份只能读到精简目录，促销字段会整段缺失——这是「倍率永远显示原价」的根因。
-- 一条促销的生效条件是 `schedule`：`timezone`（默认按条目给的时区算）、`validFrom`/`validUntil`、
-  `daily` 时段（支持 `23:00`→`07:50` 这类跨零点窗口）。命中的条目按 `priority` 取最高；平手时促销优先于档位。
+- 一条促销的生效条件是 `schedule`：`timezone`（省略时按 `Asia/Shanghai`）、`validFrom`/`validUntil`、
+  `daily` 时段（支持 `23:00`→`07:50` 这类跨零点窗口）。纯日期按当地自然日解释，`validUntil` 包含当天；
+  命中的条目按 `priority` 取最高，平手时促销优先于档位。
 - `discount.discountedCredits`（如 `0.50x`）**就是生效倍率本身**，不是相对原价的系数。
   `displayMode: "replace"` 直接替换显示，`"strikethrough"` 表示「划线原价 + 新价」并排。
 - `badge.display: "activeOnly"` 的徽标只在生效时段出现（如「限时免费」试用）。
@@ -161,8 +170,9 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 ### 用量统计口径
 
 - 每次 `wb_chat` 记一行到 `%APPDATA%\..\Coopanion\data\home\companion\data\workbuddy-usage.jsonl`
-  （实机路径；实际就是 `ctx.dataDir`）：`ts/model/region/ok/promptTokens/completionTokens/totalTokens/cachedTokens/reasoningTokens/credit/multiplier/promoId/source/durationMs`。
-- `credit` 取 SSE 最后一段的 `usage.credit`，即**上游真实扣费**；倍率 0.11 的模型单次请求不足 1 分时上游就是 0，这里照抄不折算。
+  （实机路径；实际就是 `ctx.dataDir`）：`ts/model/ok/promptTokens/completionTokens/totalTokens/cachedTokens/reasoningTokens/credit/multiplier/baseMultiplier/promoId/source/durationMs`。
+- `credit` 取 SSE 各段合并后的 `usage.credit`，即**上游真实扣费**；倍率 0.11 的模型单次请求不足 1 分时上游就是 0，这里照抄不折算。
+  上游未回传时记为未知，概览用 `+ ?` 标出缺口，绝不当成 0；`multiplier` 是响应完成时的生效倍率，`baseMultiplier` 是目录原价。
 - 积分包余额另存 `workbuddy-balance.json`（`POST /v2/billing/meter/get-user-resource` 的 `*Precise` 字段求和），
   面板上的「刷新余额」会重取一次。
 - 账本只保留 90 天，读的时候顺带裁掉；「清空本地账本」会把它清成空文件，服务端数据不受影响。
@@ -180,13 +190,11 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `region` | `cn` | `cn` / `global` |
 | `model` | `""` | 当前模型 id（面板点选即写这里） |
 | `credentialsDir` | `""` | 自定义凭据目录，留空自动发现（重启生效） |
 | `baseUrl` | `""` | 自定义上游地址，代理/中转用（重启生效） |
 | `maxTokens` | `2048` | `wb_chat` 单次输出上限 |
-| `envPrompt` | `true` | 是否把桥接状态写进 system 前缀（关掉后「中转站优先」也不生效） |
-| `prefer` | `false` | 「中转站优先」，由详情页开关写入 |
+| `envPrompt` | `true` | 是否把桥接状态写进 system 前缀 |
 | `safeOnly` | `true` | 只允许调用安全清单内的公开对话模型；关掉会放行 disabled / 别名 / 预览等项，风险自负 |
 
 ## 开发与校验
@@ -198,7 +206,8 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 node scripts/build-web.mjs
 
 # 契约检查（不依赖宿主，CI 必跑）：describe.json 与源码一致、版本号与 CHANGELOG 对齐、
-# 促销/安全清单/账本断言，以及哨兵、计费域、429 软硬、面板白名单、并发、SSE flush 等回归断言
+# 促销/安全清单/账本断言，以及哨兵、计费域、429 软硬、面板白名单、并发、SSE flush 等回归断言；
+# 0.3.1 另加 session_dead 分类、无效时段、rediscover 覆盖、跨日归零等防线（contract-regression.mjs）
 node scripts/contract.mjs
 
 # 由源码重新生成 describe.json（改过工具声明或 ENV_PROMPT.md 之后）
@@ -218,7 +227,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 并把「路由挂载」与「面板渲染」拆成两条断言——否则一次产物没加载就会被误判成「按钮没了」。
 
 版本号规范：任何改动都 bump `package.json` 的 `version`，备份目录按版本命名
-（`F:\coo-connect-wb\0.3.0\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
+（`F:\coo-connect-wb\0.3.4\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
 不一致直接非零退出。
 
 打包注意：**不要用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 `package.json`**
@@ -226,7 +235,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 用 node 读写 JSON；tgz 必须以 `package/` 为前缀：
 
 ```bash
-tar -czf cortico-world-workbuddy-0.3.0.tgz -C <stage> package
+tar -czf cortico-world-workbuddy-0.3.4.tgz -C <stage> package
 ```
 
 协议细节参照 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)
@@ -235,16 +244,22 @@ tar -czf cortico-world-workbuddy-0.3.0.tgz -C <stage> package
 
 ## 宿主文件：一个字节都不改
 
-0.3.0 起本扩展**不再往 Coopanion 主界面注入任何东西**——「中转站优先」只剩 World 详情页里
-那个勾选框，工具、面板、账本全在各自主张的地方，`resources\app` 下不会有任何改动，卸载即干净。
+0.3.0 起本扩展**不再往 Coopanion 主界面注入任何东西**——详情页只有三个只读/配置面板，
+没有开关勾选框，`resources\app` 下不会有任何改动；部署配置、账本与手动 token 按上一节的显式步骤清理。
 
-如果你装过 0.2.x，宿主 `build\console\` 里可能还留着两处痕迹，删掉即可：
+如果你装过 0.2.x，宿主 `build\console\` 里可能还留着三处痕迹。扩展本体不会自动改
+宿主文件（这正是 0.3.0 起的承诺），请用一次性迁移脚本清理：
 
-| 文件 | 说明 |
+```bash
+node scripts/clean-legacy-injection.mjs --check   # 只列出会动的项
+node scripts/clean-legacy-injection.mjs --clean   # 执行清理（幂等）
+```
+
+| 文件 | 脚本会做什么 |
 |---|---|
-| `<app>\build\console\index.html` | 删掉 `<script type="module" src="./workbuddy-home.js"></script>` 这一行 |
-| `<app>\build\console\workbuddy-home.js` | 旧的注入脚本，直接删 |
-| `<app>\build\console\index.html.workbuddy-backup` | 首次注入前的原件备份，确认 `index.html` 干净后可删 |
+| `<app>\build\console\index.html` | 只剥掉 `<script type="module" src="./workbuddy-home.js"></script>` 这一行，保留原有换行风格与其余内容 |
+| `<app>\build\console\workbuddy-home.js` | 删除旧的注入脚本 |
+| `<app>\build\console\index.html.workbuddy-backup` | 删除首次注入前的原件备份 |
 
 ## 发布（GitHub / npm / 扩展市场）
 
@@ -266,12 +281,12 @@ Action 定时扫 npm 生成市场目录，所以发版顺序是：**先 npm publ
 
 ```bash
 # 1. 发版前三连检（需要本机真实宿主）
-node scripts/contract.mjs        # 不依赖宿主，68 条断言
+node scripts/contract.mjs        # 不依赖宿主，全部断言
 node scripts/selfcheck.mjs       # dry-mount 框架契约
 node scripts/verify-ui.mjs --runs 3
 
 # 2. 提交并打 tag
-git tag v0.3.0 && git push --tags
+git tag v0.3.4 && git push --tags
 
 # 3. 发布（prepack 会自动重建 dist/webui.js）
 npm publish --access public
@@ -283,13 +298,15 @@ gh issue create -R Pal-AI-Lab/cortico-extensions --title "[sync] cortico-world-w
 对标签有异议用 `[tags]`、申请蓝标认证用 `[certify]`、被拉黑申诉用 `[appeal]`，
 正文一行一项 `键: 值`（`package` / `add` / `remove` / `reason` / `evidence`）。
 
-CI 里没有 Coopanion，自检会跳过而不是红叉：
+CI 里没有 Coopanion：自检改跑离线检查（全部源码 `node --check` + `contract`），
+不会红叉，也不会无条件算通过：
 
 ```bash
 node scripts/selfcheck.mjs --allow-missing-host   # 找不到宿主 → 警告 + 退出码 0
 ```
 
-凭据读取范围与网络出口见 [SECURITY.md](./SECURITY.md)：读哪些文件、只发给哪两个域名、哪些从不写盘。
+凭据读取范围与网络出口见 [SECURITY.md](./SECURITY.md)：读哪些文件、默认只发给哪两个官方域名
+（配了自定义 `baseUrl` 时从该出口走）、哪些从不写盘。
 
 ## 免责
 

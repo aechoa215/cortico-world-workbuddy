@@ -73,17 +73,17 @@ export class UsageLedger {
   /**
    * 追加一条调用记录。
    * @param {{
-   *   ts?: number, model: string, region?: string, ok?: boolean, error?: string,
+   *   ts?: number, model: string, ok?: boolean, error?: string,
    *   promptTokens?: number, completionTokens?: number, totalTokens?: number,
    *   cachedTokens?: number, reasoningTokens?: number, credit?: number | null,
-   *   multiplier?: number | null, promoId?: string, source?: string, durationMs?: number,
+   *   multiplier?: number | null, baseMultiplier?: number | null,
+   *   promoId?: string, source?: string, durationMs?: number,
    * }} entry
    */
   async append(entry) {
     const record = {
       ts: typeof entry.ts === 'number' ? entry.ts : Date.now(),
       model: String(entry.model ?? '—'),
-      region: entry.region,
       ok: entry.ok !== false,
       ...(entry.error === undefined ? {} : { error: String(entry.error).slice(0, 300) }),
       ...num('promptTokens', entry.promptTokens),
@@ -94,6 +94,9 @@ export class UsageLedger {
       ...(typeof entry.credit === 'number' && Number.isFinite(entry.credit) ? { credit: entry.credit } : {}),
       ...(typeof entry.multiplier === 'number' && Number.isFinite(entry.multiplier)
         ? { multiplier: entry.multiplier }
+        : {}),
+      ...(typeof entry.baseMultiplier === 'number' && Number.isFinite(entry.baseMultiplier)
+        ? { baseMultiplier: entry.baseMultiplier }
         : {}),
       ...(entry.promoId === undefined ? {} : { promoId: String(entry.promoId) }),
       ...(entry.source === undefined ? {} : { source: String(entry.source) }),
@@ -182,13 +185,18 @@ export class UsageLedger {
     }
   }
 
-  /** 写入余额快照（先写临时文件再改名，避免半截 JSON）。 */
+  /** 写入余额快照（走与账本同一条写队列，先写临时文件再改名，避免并发互相覆盖）。 */
   async writeBalance(snapshot) {
+    const text = JSON.stringify(snapshot, null, 2);
     try {
-      await mkdir(dirname(this.balancePath), { recursive: true });
-      const tmp = join(this.dir, `${BALANCE_FILE}.tmp`);
-      await writeFile(tmp, JSON.stringify(snapshot, null, 2), 'utf8');
-      await rename(tmp, this.balancePath);
+      await this._withLock(async () => {
+        await mkdir(dirname(this.balancePath), { recursive: true });
+        // 0.3.0 用固定名 BALANCE_FILE.tmp 且不排队：两个并发写会抢同一个临时文件，
+        // 互相覆盖甚至 rename 到一个已被删掉的路径。队列串行 + 带 pid 的临时名。
+        const tmp = join(this.dir, `${BALANCE_FILE}.${process.pid}.tmp`);
+        await writeFile(tmp, text, 'utf8');
+        await rename(tmp, this.balancePath);
+      });
       return true;
     } catch (err) {
       this.log.warn?.(`写余额快照失败：${err?.message ?? err}`);
@@ -202,10 +210,8 @@ export class UsageLedger {
  *
  * @param {Array<{ts:number, model:string, ok?:boolean, credit?:number, promptTokens?:number, completionTokens?:number, totalTokens?:number, cachedTokens?:number, reasoningTokens?:number}>} records
  * @param {number} nowMs
- * @param {{ days?: number }} [opts]
  */
-export function summarize(records, nowMs, opts = {}) {
-  const windowDays = opts.days ?? 30;
+export function summarize(records, nowMs) {
   const startOfToday = startOfDay(nowMs);
   const windows = {
     today: startOfToday,
@@ -217,13 +223,13 @@ export function summarize(records, nowMs, opts = {}) {
   const totals = {};
   for (const [key, from] of Object.entries(windows)) totals[key] = emptyTotals();
 
-  /** 按模型聚合（近 N 天）。 */
+  /** 按模型聚合（近 30 天，与概览的 month 行同口径）。 */
   const byModel = new Map();
-  /** 按天聚合（近 N 天，用于迷你趋势）。 */
+  /** 按天聚合（近 30 天，用于迷你趋势）。 */
   const byDay = new Map();
 
   for (const rec of records) {
-    const credit = numberOr(rec.credit, 0);
+    const credit = typeof rec.credit === 'number' && Number.isFinite(rec.credit) ? rec.credit : undefined;
     const prompt = numberOr(rec.promptTokens, 0);
     const completion = numberOr(rec.completionTokens, 0);
     const total = numberOr(rec.totalTokens, prompt + completion);
@@ -256,34 +262,34 @@ export function summarize(records, nowMs, opts = {}) {
     ts: rec.ts,
     model: rec.model,
     ok: rec.ok !== false,
-    credit: numberOr(rec.credit, 0),
+    credit: typeof rec.credit === 'number' && Number.isFinite(rec.credit) ? rec.credit : null,
     total: numberOr(rec.totalTokens, numberOr(rec.promptTokens, 0) + numberOr(rec.completionTokens, 0)),
     prompt: numberOr(rec.promptTokens, 0),
     completion: numberOr(rec.completionTokens, 0),
+    cached: numberOr(rec.cachedTokens, 0),
     multiplier: rec.multiplier,
+    baseMultiplier: rec.baseMultiplier,
     durationMs: rec.durationMs,
   }));
 
-  const spanDays = Math.max(1, Math.ceil((nowMs - startOfToday) / 864e5) + 1);
   return {
-    windowDays,
-    spanDays,
     totals,
     byModel: modelRows.slice(0, 10),
-    byDay: dayRows.slice(-Math.max(7, Math.min(30, windowDays))),
+    byDay: dayRows.slice(-30),
     recent,
     recordCount: records.length,
   };
 }
 
 function emptyTotals() {
-  return { calls: 0, failed: 0, credit: 0, prompt: 0, completion: 0, total: 0, cached: 0, reasoning: 0 };
+  return { calls: 0, failed: 0, credit: 0, creditUnknown: 0, prompt: 0, completion: 0, total: 0, cached: 0, reasoning: 0 };
 }
 
 function accumulate(target, v) {
   target.calls += 1;
   if (!v.ok) target.failed += 1;
-  target.credit += v.credit;
+  if (typeof v.credit === 'number') target.credit += v.credit;
+  else target.creditUnknown += 1;
   target.prompt += v.prompt;
   target.completion += v.completion;
   target.total += v.total;

@@ -1,9 +1,10 @@
 name: CI
 
+# 0.3.1：tag 触发交给 release.yml（它内部有 verify → publish 的 needs 依赖），
+# 这里只负责日常 push / PR，避免两套工作流各自监听 v* 却互不知情。
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -11,15 +12,12 @@ permissions:
   contents: read
 
 jobs:
-  # 完整流水线只能在 Windows 上跑：本包的 package.json 声明了 "os": ["win32"]，
-  # npm 在 Linux 上会直接 EBADPLATFORM 拒绝安装（这是有意的平台限制，不是配置错误）。
   check:
-    name: check (${{ matrix.os }} / node ${{ matrix.node }})
-    runs-on: ${{ matrix.os }}
+    name: check (windows / node ${{ matrix.node }})
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -28,42 +26,40 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # 有 package-lock.json：devDependencies 只有 esbuild，用 npm ci 保证可复现。
       - name: Install devDependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Syntax check
         shell: bash
         run: |
           set -e
-          for f in src/*.js src/webui/*.js scripts/*.mjs; do
+          for f in src/*.js src/webui/*.js scripts/*.mjs scripts/lib/*.mjs; do
             node --check "$f"
           done
+
+      - name: Contract assertions
+        run: node scripts/contract.mjs
+
+      - name: describe.json is generated from source
+        run: node scripts/gen-describe.mjs --check
 
       # dist 必须与源码同步：改了客户端却忘了重建时，这一步会红
       - name: Build webui and verify dist is up to date
         shell: bash
         run: |
           set -e
-          npm run build:web
+          node scripts/build-web.mjs --strict
           git diff --exit-code -- dist/ || {
             echo "::error::dist/webui.js 与 src/webui/client.js 不同步，请在本地跑 npm run build:web 后提交"
             exit 1
           }
 
-      # World 契约自检需要宿主框架；CI 没有 Coopanion，所以允许缺失（会 warning 但退出 0）
+      # World 契约自检需要宿主框架；CI 没有 Coopanion，允许缺失（改跑离线检查，仍会红叉真失败）
       - name: Extension selfcheck
         run: node scripts/selfcheck.mjs --allow-missing-host
 
-      # 契约检查：describe.json 与源码一致、版本号与 CHANGELOG 对齐、促销/安全清单/账本断言。
-      # 这一条不依赖宿主，CI 上跑；以前 selfcheck 在缺宿主时直接 exit 0，等于没检查。
-      - name: Contract checks
-        run: node scripts/contract.mjs
-
-  # Linux 上只做「不安装依赖也能跑」的检查：语法 + 契约自检（无宿主时跳过）。
-  # 这样跨平台的问题（大小写、换行、路径分隔符）仍然能被发现。
   cross-platform:
-    name: cross-platform (ubuntu-latest / node ${{ matrix.node }})
+    name: cross-platform (ubuntu / node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -80,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for f in src/*.js src/webui/*.js scripts/*.mjs; do
+          for f in src/*.js src/webui/*.js scripts/*.mjs scripts/lib/*.mjs; do
             node --check "$f"
           done
           node -e "JSON.parse(require('node:fs').readFileSync('package.json','utf8'));JSON.parse(require('node:fs').readFileSync('describe.json','utf8'));console.log('json ok')"
@@ -88,8 +84,7 @@ jobs:
       - name: Extension selfcheck (host missing is expected)
         run: node scripts/selfcheck.mjs --allow-missing-host
 
-  # 端到端 UI 验证需要本机装好 Coopanion 与 Chrome。CI 上没有，所以：
-  # 没检测到宿主就明确 skip（退出码 0），不让这条红叉造成「哪里坏了」的误会。
+  # 端到端 UI 验证需要本机装好 Coopanion 与 Chrome；CI 上没有就明确跳过。
   visual:
     name: visual (windows, optional)
     runs-on: windows-latest
@@ -99,7 +94,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --no-audit --no-fund
+      - run: npm install --no-audit --no-fund
 
       - name: verify-ui (skipped unless Coopanion is installed)
         shell: pwsh

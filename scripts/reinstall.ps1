@@ -89,9 +89,20 @@ if ($NoPack) {
     New-Item -ItemType Directory -Force $OutDir | Out-Null
     Push-Location $PackageDir
     try {
-      $out = & $npmCmd.Source pack --pack-destination $OutDir 2>&1 | Out-String
-      if ($LASTEXITCODE -ne 0) { Write-Host $out -ForegroundColor Yellow }
-      $packed = ($LASTEXITCODE -eq 0) -and (Test-Path $tgz)
+      # npm 把 notice 写进 stderr；Windows PowerShell 5.1 在 $ErrorActionPreference='Stop'
+      # 下遇到原生命令的 stderr 会抛 NativeCommandError，把正常的 pack 误判成失败，
+      # 静默退回手工 tar、绕过 prepack（0.3.1 修复，审查报告第 6 条的真正触发点）。
+      # 临时降到 Continue，用真实退出码判断，绝不让一行 notice 改变打包路径。
+      $prevEap = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      try {
+        $out = & $npmCmd.Source pack --pack-destination $OutDir 2>&1 | Out-String
+        $packCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $prevEap
+      }
+      if ($packCode -ne 0) { Write-Host $out -ForegroundColor Yellow }
+      $packed = ($packCode -eq 0) -and (Test-Path $tgz)
     } catch {
       $packed = $false
     } finally { Pop-Location }
@@ -128,7 +139,7 @@ if (-not (Test-Path (Join-Path $packRoot 'package.json'))) { Fail "tgz 里没有
 
 $packedPkg = Get-Content -Raw -Encoding UTF8 (Join-Path $packRoot 'package.json') | ConvertFrom-Json
 if ($packedPkg.version -ne $version) { Fail "tgz 里的版本是 $($packedPkg.version)，与源码 $version 不一致（先 bump 或重新打包）" }
-if (-not (Test-Path (Join-Path $packRoot 'ENV_PROMPT.md'))) { } # 0.2.0 起根 ENV_PROMPT.md 已删除，模板只在 src/ 下
+# 根 ENV_PROMPT.md 自 0.2.0 起已删除，模板只在 src/ 下；这里无需再检查。
 
 # --- 3) 卸载旧的，再装新的 ------------------------------------------------
 Push-Location $extDir

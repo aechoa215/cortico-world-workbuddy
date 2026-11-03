@@ -129,10 +129,3 @@ export async function detectWorkBuddy(force = false) {
   if (state.via !== 'error') cache = { at: now, value };
   return value;
 }
-
-/** 给面板/提示词用的一行摘要。 */
-export function describeProc(state) {
-  if (!state) return 'unknown';
-  if (state.running) return `running (pid ${state.mainPid ?? '?'})`;
-  return 'stopped';
-}

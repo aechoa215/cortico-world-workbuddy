@@ -26,7 +26,6 @@ const TEXT = {
     source: '来源',
     token: 'Token（掩码）',
     account: '账号',
-    region: '区域',
     upstream: '上游',
     rediscover: '重新检测本机登录',
     pasteToken: '手动粘贴 access token',
@@ -39,29 +38,26 @@ const TEXT = {
     lastError: '最近错误',
     models: '个模型',
     currentModel: '当前模型',
-    priorityTitle: '中转站优先',
-    priorityLabel: '是否启用Workbuddy',
-    priorityDesc:
-      '打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过 WorkBuddy。需要 WorkBuddy 桌面端主进程在运行。',
     procRunning: 'WorkBuddy 主进程：运行中',
     procStopped: 'WorkBuddy 主进程：未检测到',
-    noProcess: '未检测到Workbuddy',
-    enabledOn: '已开启：桌宠优先走 WorkBuddy 模型',
-    enabledOff: '已关闭：桌宠跳过 WorkBuddy',
-    usageTitle: '用量',
+    usageTitle: '用量与成本',
     usageDesc:
-      '本机记账的调用用量与 WorkBuddy 积分包余额。积分取上游每次调用回传的真实扣费（可能为 0），倍率按目录 + 限时优惠实时计算。',
+      '经由 WorkBuddy 消耗的 token 与积分（本地记账）：积分取上游每次调用回传的真实扣费（可能为 0），token 取同一段 SSE 的 usage；倍率按目录 + 限时优惠实时计算。',
     usageRefresh: '刷新余额',
     usageClear: '清空本地账本',
     usageCleared: '本地账本已清空',
     metricCalls: '调用',
+    metricFailed: '失败',
     metricCredit: '积分',
     metricInput: '输入 tok',
     metricOutput: '输出 tok',
+    metricCached: '缓存命中',
+    metricTotal: '共 tok',
     spanToday: '今天',
     spanWeek: '近 7 天',
     spanMonth: '近 30 天',
-    byModel: '按模型',
+    spanAll: '全部',
+    byModel: '按模型（近 30 天）',
     balanceTitle: '积分包余额',
     colPkgName: '积分包',
     colPkgRemain: '剩余',
@@ -107,7 +103,6 @@ const TEXT = {
     source: 'Source',
     token: 'Token (masked)',
     account: 'Account',
-    region: 'Region',
     upstream: 'Upstream',
     rediscover: 'Re-detect local sign-in',
     pasteToken: 'Paste an access token manually',
@@ -120,29 +115,26 @@ const TEXT = {
     lastError: 'Last error',
     models: 'models',
     currentModel: 'Current model',
-    priorityTitle: 'Relay first',
-    priorityLabel: 'Enable Workbuddy',
-    priorityDesc:
-      'Same state as the “Relay first” button on the Home page: when on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Requires the WorkBuddy desktop main process.',
     procRunning: 'WorkBuddy process: running',
     procStopped: 'WorkBuddy process: not detected',
-    noProcess: 'Workbuddy not detected',
-    enabledOn: 'On: the pet asks WorkBuddy first',
-    enabledOff: 'Off: the pet skips WorkBuddy',
-    usageTitle: 'Usage',
+    usageTitle: 'Usage & cost',
     usageDesc:
-      'Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.',
+      'Tokens and credits spent through WorkBuddy (locally recorded): credits are the per-call figure the upstream returns (may be 0), tokens come from the same SSE usage block; multipliers combine the catalog with time-limited offers in real time.',
     usageRefresh: 'Refresh balance',
     usageClear: 'Clear local ledger',
     usageCleared: 'Local ledger cleared',
     metricCalls: 'Calls',
+    metricFailed: 'Failed',
     metricCredit: 'Credits',
     metricInput: 'Input tok',
     metricOutput: 'Output tok',
+    metricCached: 'Cached',
+    metricTotal: 'Total tok',
     spanToday: 'Today',
     spanWeek: 'Last 7 days',
     spanMonth: 'Last 30 days',
-    byModel: 'By model',
+    spanAll: 'All',
+    byModel: 'By model (last 30 days)',
     balanceTitle: 'Credit packages',
     colPkgName: 'Package',
     colPkgRemain: 'Remaining',
@@ -215,9 +207,10 @@ function mountModels(ctx) {
   const head = ui.rowbar();
   const refreshBtn = ui.button(s.refresh, { variant: 'primary' });
   const stateChip = ui.chip('', 'plain');
+  const procChip = ui.chip('', 'plain');
   const currentChip = ui.chip('', 'accent');
   const allBox = ui.checkbox(s.showAllModels, { checked: false });
-  head.append(refreshBtn, stateChip, currentChip, allBox.el);
+  head.append(refreshBtn, stateChip, procChip, currentChip, allBox.el);
   sheet.body.append(head);
 
   const errLine = ui.msgline();
@@ -238,6 +231,7 @@ function mountModels(ctx) {
       state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn
     }`;
     currentChip.textContent = `${s.currentModel}: ${state?.model || '—'}`;
+    procChip.textContent = state?.running ? s.procRunning : s.procStopped;
   }
 
   /** 当前是否允许选这个模型：safeOnly 开时只放行安全清单。 */
@@ -397,7 +391,6 @@ function mountAccount(ctx) {
       { k: s.source, v: state?.tokenSource ?? '—' },
       { k: s.token, v: state?.tokenMask ?? '—' },
       { k: s.account, v: state?.account?.name ?? '—' },
-      { k: s.region, v: state?.region ?? '—' },
       { k: s.upstream, v: state?.baseUrl ?? '—' },
     ];
     if (state?.lastError) rows.push({ k: s.lastError, v: state.lastError });
@@ -467,61 +460,15 @@ function mountAccount(ctx) {
   });
 }
 
-function mountPriority(ctx) {
-  const s = strings(ctx);
-  const { ui } = ctx;
-
-  const sheet = ui.sheet({ title: s.priorityTitle, desc: s.priorityDesc });
-  ctx.root.append(sheet.el);
-
-  const statusLine = ui.msgline();
-
-  /** 用服务端状态刷新界面（不触发 onChange）。 */
-  function apply(r) {
-    if (!r) return;
-    box.setChecked(r.prefer === true);
-    statusLine.textContent = r.running ? s.procRunning : s.procStopped;
-  }
-
-  const box = ui.checkbox(s.priorityLabel, {
-    checked: false,
-    title: s.priorityDesc,
-    onChange: async (checked) => {
-      try {
-        const r = await ctx.invoke('set', [checked]);
-        if (r?.ok) {
-          apply(r);
-          ui.toast(checked ? s.enabledOn : s.enabledOff);
-        } else {
-          // 没检测到 WorkBuddy 主进程（或其它失败）：开关退回关，并把原因说清楚。
-          apply(r);
-          box.setChecked(false);
-          ui.toast(r?.error ?? s.noProcess, 'bad');
-        }
-      } catch (err) {
-        box.setChecked(false);
-        ui.toast(String(err?.message ?? err), 'bad');
-      }
-    },
-  });
-  sheet.body.append(box.el, statusLine);
-
-  async function load() {
-    apply(await ctx.invoke('state'));
-  }
-
-  ctx.stream({
-    message: () => load().catch(() => {}),
-  });
-
-  load().catch((err) => {
-    statusLine.textContent = String(err?.message ?? err);
-  });
-}
-
 function fmtNum(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
   return String(Math.round(n * 100) / 100);
+}
+
+/** 有记录未回传 credit 时明确标出缺口，绝不把未知当成 0。 */
+function fmtCredit(bucket) {
+  const known = fmtNum(bucket?.credit);
+  return (bucket?.creditUnknown ?? 0) > 0 ? `${known} + ?` : known;
 }
 
 function mountUsage(ctx) {
@@ -542,16 +489,26 @@ function mountUsage(ctx) {
   const errLine = ui.msgline();
   sheet.body.append(errLine);
 
-  // 区间概览：今天 / 近 7 天 / 近 30 天 / 全部（口径与 Coopanion「用量与成本」一致）。
+  // 区间概览：今天 / 近 7 天 / 近 30 天 / 全部（口径与 Coopanion「用量与成本」一致：
+  // 调用数、失败数、积分、输入/输出/缓存命中/合计 token）。
   const overview = ui.table({
-    head: ['', s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    head: [
+      '',
+      s.metricCalls,
+      s.metricFailed,
+      s.metricCredit,
+      s.metricInput,
+      s.metricOutput,
+      s.metricCached,
+      s.metricTotal,
+    ],
     maxHeight: '220px',
   });
   sheet.body.append(overview.el);
 
   const modelSection = ui.section(s.byModel);
   const modelTable = ui.table({
-    head: [s.colModel, s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    head: [s.colModel, s.metricCalls, s.metricFailed, s.metricCredit, s.metricInput, s.metricOutput, s.metricTotal],
     maxHeight: '260px',
   });
   modelSection.append(modelTable.el);
@@ -582,24 +539,46 @@ function mountUsage(ctx) {
 
   function spanRow(label, bucket) {
     const b = bucket ?? {};
-    return [label, String(b.calls ?? 0), fmtNum(b.credit), fmtNum(b.prompt), fmtNum(b.completion)];
+    return [
+      label,
+      String(b.calls ?? 0),
+      String(b.failed ?? 0),
+      fmtCredit(b),
+      fmtNum(b.prompt),
+      fmtNum(b.completion),
+      fmtNum(b.cached),
+      fmtNum(b.total),
+    ];
   }
 
   function render() {
     const totals = state?.summary?.totals ?? {};
-    todayChip.textContent = `${s.todayCredit}: ${fmtNum(totals.today?.credit)} · ${s.todayTokens}: ${fmtNum(
+    todayChip.textContent = `${s.todayCredit}: ${fmtCredit(totals.today)} · ${s.todayTokens}: ${fmtNum(
       (totals.today?.prompt ?? 0) + (totals.today?.completion ?? 0),
     )}`;
     balanceChip.textContent = `${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`;
 
-    const spans = [spanRow(s.spanToday, totals.today), spanRow(s.spanWeek, totals.week), spanRow(s.spanMonth, totals.month)];
+    const spans = [
+      spanRow(s.spanToday, totals.today),
+      spanRow(s.spanWeek, totals.week),
+      spanRow(s.spanMonth, totals.month),
+      spanRow(s.spanAll, totals.all),
+    ];
     overview.clear();
     for (const row of spans) overview.addRow(row);
 
     const byModel = state?.summary?.byModel ?? [];
     modelTable.clear(byModel.length > 0 ? undefined : s.noData);
     for (const m of byModel) {
-      modelTable.addRow([m.model, String(m.calls ?? 0), fmtNum(m.credit), fmtNum(m.prompt), fmtNum(m.completion)]);
+      modelTable.addRow([
+        m.model,
+        String(m.calls ?? 0),
+        String(m.failed ?? 0),
+        fmtCredit(m),
+        fmtNum(m.prompt),
+        fmtNum(m.completion),
+        fmtNum(m.total),
+      ]);
     }
 
     const packages = state?.balance?.packages ?? [];
@@ -706,7 +685,6 @@ export default {
   panels: {
     models: { mount: mountModels },
     account: { mount: mountAccount },
-    priority: { mount: mountPriority },
     usage: { mount: mountUsage },
   },
 };

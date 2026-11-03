@@ -114,7 +114,7 @@ async function api(path, init) {
   const res = await fetch(`http://127.0.0.1:${PROXY_PORT}${path}`, init);
   return res.json();
 }
-const panel = (method, args) => api(`/api/webui/providers/world%3Aworkbuddy/panels/priority/${method}`, {
+const panel = (name, method, args) => api(`/api/webui/providers/world%3Aworkbuddy/panels/${name}/${method}`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${PROXY_PORT}` },
   body: JSON.stringify({ args }),
@@ -253,11 +253,12 @@ const readHome = `(() => {
     labels: [...document.querySelectorAll('.home-pickerlabel')].map((n) => n.textContent.trim()) };
 })()`;
 
-const readWorldPage = `(() => {
-  const label = [...document.querySelectorAll('*')].find((n) => n.textContent?.trim() === '是否启用Workbuddy' && n.offsetParent !== null);
-  const box = document.querySelector('input[type="checkbox"]');
-  return { hash: location.hash, routeMounted: /provider\\/world%3Aworkbuddy/.test(location.hash),
-    panelRendered: !!label, checkbox: !!box, checked: box?.checked ?? null,
+const readModelsPage = `(() => {
+  const th = [...document.querySelectorAll('th')].map((n) => n.textContent.trim());
+  const text = document.body.innerText || '';
+  return { policy: th.includes('合规'), headers: th.join('|'),
+    rows: document.querySelectorAll('table tr').length,
+    proc: /WorkBuddy 主进程：(运行中|未检测到)/.test(text),
     tabs: [...document.querySelectorAll('button,a')].map((n) => n.textContent.trim()).filter((t) => t && t.length < 24) };
 })()`;
 
@@ -269,9 +270,6 @@ for (let run = 1; run <= RUNS; run += 1) {
   const row = { run, checks: {} };
   consoleErrors.length = 0;
 
-  // 归零
-  await panel('set', [false]);
-
   // --- 开始页：正常渲染，且确认 0.3.0 已不再注入任何按钮 ---
   await send('Page.navigate', { url: `${HOME}?t=${tag}` });
   try {
@@ -282,7 +280,6 @@ for (let run = 1; run <= RUNS; run += 1) {
     row.checks.homeRoute = true;
     row.checks.homeNoInjection = home.injectedRow === false;
     row.checks.homeLabels = home.labels;
-    if (SHOTS && run === 1) await shot('home-clean');
     if (KEEP) await shot(`run${run}-home`);
   } catch (err) {
     row.checks.homeError = String(err.message || err);
@@ -297,32 +294,22 @@ for (let run = 1; run <= RUNS; run += 1) {
     await waitFor('World 页完成加载', async () => (await evaluate(`document.readyState`)) === 'complete');
     await waitFor('World 页路由挂载', async () => evaluate(`/provider\\/world%3Aworkbuddy/.test(location.hash)`));
     row.checks.worldRoute = true;
-    await waitFor('页签出现', async () => evaluate(`[...document.querySelectorAll('button,a')].some((n) => n.textContent.trim() === '是否启用 WorkBuddy')`));
+    await waitFor('页签出现', async () => evaluate(`[...document.querySelectorAll('button,a')].some((n) => n.textContent.trim() === '模型目录')`));
     row.checks.worldTabs = true;
-    await evaluate(clickByText('是否启用 WorkBuddy'));
-    const pane = await waitFor('面板渲染（复选框）', async () => {
-      const v = await evaluate(readWorldPage);
-      return v.panelRendered && v.checkbox ? v : false;
+    // 0.3.4：删掉「中转站优先」页签；不再声明 storage，宿主也不会生成空白「数据清理」页签。
+    const tabs = await evaluate(`[...document.querySelectorAll('button,a')].map((n) => n.textContent.trim()).filter((t) => t && t.length < 24)`);
+    row.checks.noPriorityTab = !tabs.includes('是否启用 WorkBuddy');
+    row.checks.noStorageTab = !tabs.includes('数据清理');
+    await evaluate(clickByText('模型目录'));
+    const modelsHead = await waitFor('模型目录渲染（只读主进程状态）', async () => {
+      const v = await evaluate(readModelsPage);
+      return v.proc ? v : false;
     });
     row.checks.panelRendered = true;
-    // 勾上
-    await evaluate(`document.querySelector('input[type="checkbox"]').click()`);
-    await waitFor('面板勾选 → prefer=true', async () => {
-      const dom = await evaluate(`document.querySelector('input[type="checkbox"]')?.checked ?? null`);
-      const api = await panel('state', []);
-      return dom === true && api.prefer === true ? true : false;
-    });
-    row.checks.panelToggleOn = true;
-    if (SHOTS && run === 1) { await sleep(400); await shot('world-priority-on'); }
-    await evaluate(`document.querySelector('input[type="checkbox"]').click()`);
-    await waitFor('面板取消 → prefer=false', async () => {
-      const dom = await evaluate(`document.querySelector('input[type="checkbox"]')?.checked ?? null`);
-      const api = await panel('state', []);
-      return dom === false && api.prefer === false ? true : false;
-    });
-    row.checks.panelToggleOff = true;
+    row.checks.modelsProcessChip = modelsHead.proc;
+    if (SHOTS && run === 1) { await sleep(300); await shot('world-models'); }
     // --- 用量面板：页签 → 渲染 → 概览表有行 ---
-    await evaluate(clickByText('用量'));
+    await evaluate(clickByText('用量与成本'));
     const usage = await waitFor('用量面板渲染', async () => {
       const v = await evaluate(`(() => {
         const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '刷新余额' && b.offsetParent !== null);
@@ -354,7 +341,6 @@ for (let run = 1; run <= RUNS; run += 1) {
     row.checks.modelsHasShowAll = modelsView.checkboxes >= 1;
     if (SHOTS && run === 1) { await sleep(300); await shot('world-models'); }
     if (KEEP) await shot(`run${run}-world`);
-    void pane;
   } catch (err) {
     row.checks.worldError = String(err.message || err);
     hardFailures += 1;
@@ -371,7 +357,6 @@ for (let run = 1; run <= RUNS; run += 1) {
 }
 
 // ---------------------------------------------------------------- 收尾
-await panel('set', [false]);
 ws.close();
 chrome.kill();
 proxy.close();

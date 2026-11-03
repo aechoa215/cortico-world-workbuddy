@@ -2,12 +2,12 @@
  * WorkBuddy 上游客户端：模型目录、积分余额、chat completions 流式、token 刷新。
  *
  * 协议参照 dsh-connect-workbuddy（MIT）与 workbuddy2api（MIT）的实测结论：
- *  - 模型目录：GET  /v2/enterprises/personal/models（/v2 形态两区网关都答；
+ *  - 模型目录：GET  /v2/enterprises/personal/models（WorkBuddy网关；
  *    每个模型条目带 id / name / maxInputTokens / maxOutputTokens /
  *    credits（积分倍率字符串，如 "x0.79"）/ supportsImages / reasoning 等）
  *  - 对话：    POST /v2/chat/completions，强制 stream:true，SSE 回包
- *  - 刷新：    POST /v2/auth/refresh，刷新令牌走 X-Refresh-Token 头，
- *    chat 请求绝不携带 refresh token（安全红线）
+ *  - 登录态：  token 失效时重新从本机凭据发现（桌面端自己刷新落盘）；本模块不做
+ *    自动刷新，chat 请求绝不携带 refresh token（安全红线）
  *  - 归属头：  X-IDE-Name / X-IDE-Type / X-Product = WorkBuddy，让用量页
  *    把这笔调用记成官方客户端发的
  *
@@ -17,11 +17,8 @@
 
 import { attachPromos, parsePromos } from './promo.js';
 
-/** 两个区域的官方上游域名。 */
-export const WB_REGION_BASE = {
-  cn: 'https://copilot.tencent.com',
-  global: 'https://www.workbuddy.ai',
-};
+/** WorkBuddy 客户端的官方上游域名。本扩展只支持这一套上游。 */
+export const WB_BASE = 'https://copilot.tencent.com';
 
 const MODELS_PATH = '/v2/enterprises/personal/models';
 /**
@@ -33,7 +30,6 @@ const MODELS_PATH = '/v2/enterprises/personal/models';
  */
 const CONFIG_PATH = '/v3/config';
 const CHAT_PATH = '/v2/chat/completions';
-const REFRESH_PATH = '/v2/auth/refresh';
 /**
  * 计费域积分读数（官方客户端「套餐与积分」页同族接口；失败时优雅降级）。
  *
@@ -44,11 +40,8 @@ const REFRESH_PATH = '/v2/auth/refresh';
  * 路径来自 dsh-connect-workbuddy 5.17.0 的 billingBase()/get-user-resource。
  */
 const CREDITS_PATH = '/v2/billing/meter/get-user-resource';
-/** 计费域（积分/签到/福利）根地址，按区域。 */
-const WB_BILLING_BASE = {
-  cn: 'https://www.codebuddy.cn',
-  global: 'https://www.workbuddy.ai',
-};
+/** 计费域（积分/签到/福利）根地址。 */
+const WB_BILLING_BASE = 'https://www.codebuddy.cn';
 
 const PRODUCT_UA = 'WorkBuddy/2.63.2';
 /**
@@ -93,15 +86,12 @@ function commonHeaders(cred, extra = {}) {
 
 export class WbUpstream {
   /**
-   * @param {{ baseUrl: string, region?: 'cn' | 'global', log?: { warn(msg: string): void } }} opts
+   * @param {{ baseUrl: string, log?: { warn(msg: string): void } }} opts
    */
   constructor(opts) {
     this.baseUrl = (opts.baseUrl ?? '').replace(/\/+$/, '');
     /** 用户显式配置了 baseUrl（代理 / 镜像）：计费请求也走它。 */
-    this.customBase = Boolean(this.baseUrl) && !Object.values(WB_REGION_BASE).includes(this.baseUrl);
-    // 计费域只看区域，不看 baseUrl：以前按域名子串猜，自定义 baseUrl（例如走代理/镜像）
-    // 会悄悄落到国际计费域 www.workbuddy.ai，查出来的余额是另一个账号的。
-    this.region = opts.region === 'global' ? 'global' : 'cn';
+    this.customBase = Boolean(this.baseUrl) && this.baseUrl !== WB_BASE;
     this.log = opts.log ?? { warn: () => {} };
   }
 
@@ -112,11 +102,11 @@ export class WbUpstream {
   /**
    * 计费域的完整地址（积分、签到、福利都在这边，和 chat 域不同）。
    *
-   * 没配 `baseUrl` 时按区域查表；配了自定义 baseUrl（代理/镜像）就跟着走同一个出口，
+   * 没配 `baseUrl` 时用官方计费域；配了自定义 baseUrl（代理/镜像）就跟着走同一个出口，
    * 否则 chat 走代理、积分直连官方域名，代理用户的网络与隐私假设会被打破。
    */
   billingUrl(path) {
-    return `${this.customBase ? this.baseUrl : WB_BILLING_BASE[this.region]}${path}`;
+    return `${this.customBase ? this.baseUrl : WB_BILLING_BASE}${path}`;
   }
 
   /**
@@ -132,6 +122,10 @@ export class WbUpstream {
    * @param {{ accessToken: string }} cred
    */
   async fetchCatalog(cred) {
+    // 每次请求重新判定：认证失败标记留在实例上会污染后续请求（同一个 WbUpstream
+    // 被复用时，上一次的 401 会让下一次成功请求也被判成登录态失效）。
+    this._authFailed = false;
+    this._authStatus = 0;
     try {
       const res = await fetch(this.url(CONFIG_PATH), {
         method: 'GET',
@@ -148,6 +142,7 @@ export class WbUpstream {
       if (!res.ok) {
         // 静默降级会让「为什么没有限时优惠」变成悬案，这里至少留一条 warn。
         this._authFailed = res.status === 401 || res.status === 403;
+        if (this._authFailed) this._authStatus = res.status;
         this.log?.warn?.(
           `产品配置 HTTP ${res.status}${this._authFailed ? '（认证失败，不再降级）' : '，退回旧目录路径（本次没有促销信息）'}。`,
         );
@@ -168,7 +163,13 @@ export class WbUpstream {
     // 认证类失败（401/403）再打一次旧接口没有意义：token 本身是死的，
     // 降级只会把真实错误（session_dead）换成 legacy 的二次失败，掩盖问题。
     if (this._authFailed) {
-      throw new WbUpstreamError('WorkBuddy 登录态已失效（产品配置返回 401/403），请重新登录客户端。', 'session_dead');
+      // 构造函数第二参是 info 对象（status / kind）。0.3.0 写成 'session_dead'
+      // 字符串，读不到 kind，错误恒为 'server'、status=0，上层于是不清 token、
+      // 面板也不提示重新登录（审查报告里最严重的一条）。
+      throw new WbUpstreamError('WorkBuddy 登录态已失效（产品配置返回 401/403），请重新登录客户端。', {
+        status: this._authStatus,
+        kind: 'session_dead',
+      });
     }
     const models = await this.fetchModelsLegacy(cred);
     return { models, promos: [], source: 'legacy' };
@@ -198,7 +199,7 @@ export class WbUpstream {
       throw new WbUpstreamError(`模型目录请求失败 HTTP ${res.status}`, {
         status: res.status,
         code: body?.code,
-        kind: res.status === 401 ? 'session_dead' : 'server',
+        kind: res.status === 401 || res.status === 403 ? 'session_dead' : 'server',
       });
     }
     if (body && typeof body.code === 'number' && body.code !== 0 && body.code !== 200) {
@@ -278,44 +279,6 @@ export class WbUpstream {
   }
 
   /**
-   * 刷新 access token。刷新令牌只出现在这一条请求里。
-   * @param {{ refreshToken: string }} cred
-   * @returns {Promise<{ accessToken: string, refreshToken?: string, expiresIn?: number }>}
-   */
-  async refresh(cred) {
-    const res = await fetch(this.url(REFRESH_PATH), {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': PRODUCT_UA,
-        'X-Requested-With': 'XMLHttpRequest',
-        'X-Refresh-Token': cred.refreshToken,
-        'X-Auth-Refresh-Source': 'workbuddy',
-      },
-      body: '{}',
-      signal: AbortSignal.timeout(10_000),
-    });
-    const body = await res.json().catch(() => null);
-    if (!res.ok || !body) {
-      throw new WbUpstreamError(`token 刷新失败 HTTP ${res.status}`, {
-        status: res.status,
-        kind: 'session_dead',
-      });
-    }
-    const data = body.data ?? body;
-    const accessToken = data.accessToken ?? data.access_token;
-    if (typeof accessToken !== 'string' || accessToken === '') {
-      throw new WbUpstreamError('token 刷新响应里没有 accessToken', { kind: 'session_dead' });
-    }
-    return {
-      accessToken,
-      refreshToken: data.refreshToken ?? data.refresh_token,
-      expiresIn: data.expiresIn ?? data.expires_in,
-    };
-  }
-
-  /**
    * 发起一次对话（SSE 流式），把增量文本逐段交给 onDelta。
    * @param {{ accessToken: string }} cred
    * @param {{ model: string, messages: Array<{role: string, content: string}>, maxTokens?: number, signal?: AbortSignal }} req
@@ -343,7 +306,7 @@ export class WbUpstream {
     }
     let text = '';
     let credit;
-    let usage;
+    let usage = {};
     const decoder = new TextDecoder();
     let buf = '';
     /** 处理一行 SSE；末尾残留（没有换行）也走这里。 */
@@ -375,7 +338,7 @@ export class WbUpstream {
         // 最后一段 SSE 带完整用量（实测：prompt_tokens / completion_tokens / total_tokens /
         // 明细里的 cached_tokens、reasoning_tokens，以及本次真实扣费 credits 的 `credit`）。
         const u = evt.usage;
-        usage = {
+        const next = {
           promptTokens: numberOrUndefined(u.prompt_tokens),
           completionTokens: numberOrUndefined(u.completion_tokens),
           totalTokens: numberOrUndefined(u.total_tokens),
@@ -386,6 +349,10 @@ export class WbUpstream {
             numberOrUndefined(u.completion_thinking_tokens),
           credit: numberOrUndefined(u.credit),
         };
+        // SSE 可能分多帧返回用量，末帧只带 credit；逐字段合并，不能用末帧覆盖前帧 token。
+        for (const [key, value] of Object.entries(next)) {
+          if (value !== undefined) usage[key] = value;
+        }
         if (typeof u.credit === 'number') credit = u.credit;
       }
     };
@@ -408,6 +375,7 @@ export class WbUpstream {
 
 /** `0` 是合法用量，只有 null / undefined / NaN 才算「没有」。 */
 function numberOrUndefined(v) {
+  if (v === null || v === undefined || v === '') return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 }

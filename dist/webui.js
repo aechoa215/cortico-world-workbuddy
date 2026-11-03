@@ -21,7 +21,6 @@ var TEXT = {
     source: "\u6765\u6E90",
     token: "Token\uFF08\u63A9\u7801\uFF09",
     account: "\u8D26\u53F7",
-    region: "\u533A\u57DF",
     upstream: "\u4E0A\u6E38",
     rediscover: "\u91CD\u65B0\u68C0\u6D4B\u672C\u673A\u767B\u5F55",
     pasteToken: "\u624B\u52A8\u7C98\u8D34 access token",
@@ -34,27 +33,25 @@ var TEXT = {
     lastError: "\u6700\u8FD1\u9519\u8BEF",
     models: "\u4E2A\u6A21\u578B",
     currentModel: "\u5F53\u524D\u6A21\u578B",
-    priorityTitle: "\u4E2D\u8F6C\u7AD9\u4F18\u5148",
-    priorityLabel: "\u662F\u5426\u542F\u7528Workbuddy",
-    priorityDesc: "\u6253\u5F00\u540E\u684C\u5BA0\u6BCF\u8F6E\u5BF9\u8BDD\u4F18\u5148\u8C03\u7528 WorkBuddy \u7684\u6A21\u578B\uFF0C\u5173\u95ED\u5219\u5B8C\u5168\u8DF3\u8FC7 WorkBuddy\u3002\u9700\u8981 WorkBuddy \u684C\u9762\u7AEF\u4E3B\u8FDB\u7A0B\u5728\u8FD0\u884C\u3002",
     procRunning: "WorkBuddy \u4E3B\u8FDB\u7A0B\uFF1A\u8FD0\u884C\u4E2D",
     procStopped: "WorkBuddy \u4E3B\u8FDB\u7A0B\uFF1A\u672A\u68C0\u6D4B\u5230",
-    noProcess: "\u672A\u68C0\u6D4B\u5230Workbuddy",
-    enabledOn: "\u5DF2\u5F00\u542F\uFF1A\u684C\u5BA0\u4F18\u5148\u8D70 WorkBuddy \u6A21\u578B",
-    enabledOff: "\u5DF2\u5173\u95ED\uFF1A\u684C\u5BA0\u8DF3\u8FC7 WorkBuddy",
-    usageTitle: "\u7528\u91CF",
-    usageDesc: "\u672C\u673A\u8BB0\u8D26\u7684\u8C03\u7528\u7528\u91CF\u4E0E WorkBuddy \u79EF\u5206\u5305\u4F59\u989D\u3002\u79EF\u5206\u53D6\u4E0A\u6E38\u6BCF\u6B21\u8C03\u7528\u56DE\u4F20\u7684\u771F\u5B9E\u6263\u8D39\uFF08\u53EF\u80FD\u4E3A 0\uFF09\uFF0C\u500D\u7387\u6309\u76EE\u5F55 + \u9650\u65F6\u4F18\u60E0\u5B9E\u65F6\u8BA1\u7B97\u3002",
+    usageTitle: "\u7528\u91CF\u4E0E\u6210\u672C",
+    usageDesc: "\u7ECF\u7531 WorkBuddy \u6D88\u8017\u7684 token \u4E0E\u79EF\u5206\uFF08\u672C\u5730\u8BB0\u8D26\uFF09\uFF1A\u79EF\u5206\u53D6\u4E0A\u6E38\u6BCF\u6B21\u8C03\u7528\u56DE\u4F20\u7684\u771F\u5B9E\u6263\u8D39\uFF08\u53EF\u80FD\u4E3A 0\uFF09\uFF0Ctoken \u53D6\u540C\u4E00\u6BB5 SSE \u7684 usage\uFF1B\u500D\u7387\u6309\u76EE\u5F55 + \u9650\u65F6\u4F18\u60E0\u5B9E\u65F6\u8BA1\u7B97\u3002",
     usageRefresh: "\u5237\u65B0\u4F59\u989D",
     usageClear: "\u6E05\u7A7A\u672C\u5730\u8D26\u672C",
     usageCleared: "\u672C\u5730\u8D26\u672C\u5DF2\u6E05\u7A7A",
     metricCalls: "\u8C03\u7528",
+    metricFailed: "\u5931\u8D25",
     metricCredit: "\u79EF\u5206",
     metricInput: "\u8F93\u5165 tok",
     metricOutput: "\u8F93\u51FA tok",
+    metricCached: "\u7F13\u5B58\u547D\u4E2D",
+    metricTotal: "\u5171 tok",
     spanToday: "\u4ECA\u5929",
     spanWeek: "\u8FD1 7 \u5929",
     spanMonth: "\u8FD1 30 \u5929",
-    byModel: "\u6309\u6A21\u578B",
+    spanAll: "\u5168\u90E8",
+    byModel: "\u6309\u6A21\u578B\uFF08\u8FD1 30 \u5929\uFF09",
     balanceTitle: "\u79EF\u5206\u5305\u4F59\u989D",
     colPkgName: "\u79EF\u5206\u5305",
     colPkgRemain: "\u5269\u4F59",
@@ -100,7 +97,6 @@ var TEXT = {
     source: "Source",
     token: "Token (masked)",
     account: "Account",
-    region: "Region",
     upstream: "Upstream",
     rediscover: "Re-detect local sign-in",
     pasteToken: "Paste an access token manually",
@@ -113,27 +109,25 @@ var TEXT = {
     lastError: "Last error",
     models: "models",
     currentModel: "Current model",
-    priorityTitle: "Relay first",
-    priorityLabel: "Enable Workbuddy",
-    priorityDesc: "Same state as the \u201CRelay first\u201D button on the Home page: when on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Requires the WorkBuddy desktop main process.",
     procRunning: "WorkBuddy process: running",
     procStopped: "WorkBuddy process: not detected",
-    noProcess: "Workbuddy not detected",
-    enabledOn: "On: the pet asks WorkBuddy first",
-    enabledOff: "Off: the pet skips WorkBuddy",
-    usageTitle: "Usage",
-    usageDesc: "Locally recorded call usage plus the WorkBuddy credit balance. Credits come from the per-call figure the upstream returns (may be 0); multipliers combine the catalog with time-limited offers in real time.",
+    usageTitle: "Usage & cost",
+    usageDesc: "Tokens and credits spent through WorkBuddy (locally recorded): credits are the per-call figure the upstream returns (may be 0), tokens come from the same SSE usage block; multipliers combine the catalog with time-limited offers in real time.",
     usageRefresh: "Refresh balance",
     usageClear: "Clear local ledger",
     usageCleared: "Local ledger cleared",
     metricCalls: "Calls",
+    metricFailed: "Failed",
     metricCredit: "Credits",
     metricInput: "Input tok",
     metricOutput: "Output tok",
+    metricCached: "Cached",
+    metricTotal: "Total tok",
     spanToday: "Today",
     spanWeek: "Last 7 days",
     spanMonth: "Last 30 days",
-    byModel: "By model",
+    spanAll: "All",
+    byModel: "By model (last 30 days)",
     balanceTitle: "Credit packages",
     colPkgName: "Package",
     colPkgRemain: "Remaining",
@@ -196,9 +190,10 @@ function mountModels(ctx) {
   const head = ui.rowbar();
   const refreshBtn = ui.button(s.refresh, { variant: "primary" });
   const stateChip = ui.chip("", "plain");
+  const procChip = ui.chip("", "plain");
   const currentChip = ui.chip("", "accent");
   const allBox = ui.checkbox(s.showAllModels, { checked: false });
-  head.append(refreshBtn, stateChip, currentChip, allBox.el);
+  head.append(refreshBtn, stateChip, procChip, currentChip, allBox.el);
   sheet.body.append(head);
   const errLine = ui.msgline();
   sheet.body.append(errLine);
@@ -213,6 +208,7 @@ function mountModels(ctx) {
     const safeCount = models.filter((m) => m.safety?.allow).length;
     stateChip.textContent = `${s.lastRefresh}: ${fmtTs(state?.catalogAt, s)} \xB7 ${safeCount}/${models.length} ${s.models} \xB7 ${state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn}`;
     currentChip.textContent = `${s.currentModel}: ${state?.model || "\u2014"}`;
+    procChip.textContent = state?.running ? s.procRunning : s.procStopped;
   }
   function pickable(m) {
     if (state?.safeOnly === false) return true;
@@ -352,7 +348,6 @@ function mountAccount(ctx) {
       { k: s.source, v: state?.tokenSource ?? "\u2014" },
       { k: s.token, v: state?.tokenMask ?? "\u2014" },
       { k: s.account, v: state?.account?.name ?? "\u2014" },
-      { k: s.region, v: state?.region ?? "\u2014" },
       { k: s.upstream, v: state?.baseUrl ?? "\u2014" }
     ];
     if (state?.lastError) rows.push({ k: s.lastError, v: state.lastError });
@@ -415,52 +410,13 @@ function mountAccount(ctx) {
     errLine.textContent = String(err?.message ?? err);
   });
 }
-function mountPriority(ctx) {
-  const s = strings(ctx);
-  const { ui } = ctx;
-  const sheet = ui.sheet({ title: s.priorityTitle, desc: s.priorityDesc });
-  ctx.root.append(sheet.el);
-  const statusLine = ui.msgline();
-  function apply(r) {
-    if (!r) return;
-    box.setChecked(r.prefer === true);
-    statusLine.textContent = r.running ? s.procRunning : s.procStopped;
-  }
-  const box = ui.checkbox(s.priorityLabel, {
-    checked: false,
-    title: s.priorityDesc,
-    onChange: async (checked) => {
-      try {
-        const r = await ctx.invoke("set", [checked]);
-        if (r?.ok) {
-          apply(r);
-          ui.toast(checked ? s.enabledOn : s.enabledOff);
-        } else {
-          apply(r);
-          box.setChecked(false);
-          ui.toast(r?.error ?? s.noProcess, "bad");
-        }
-      } catch (err) {
-        box.setChecked(false);
-        ui.toast(String(err?.message ?? err), "bad");
-      }
-    }
-  });
-  sheet.body.append(box.el, statusLine);
-  async function load() {
-    apply(await ctx.invoke("state"));
-  }
-  ctx.stream({
-    message: () => load().catch(() => {
-    })
-  });
-  load().catch((err) => {
-    statusLine.textContent = String(err?.message ?? err);
-  });
-}
 function fmtNum(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "\u2014";
   return String(Math.round(n * 100) / 100);
+}
+function fmtCredit(bucket) {
+  const known = fmtNum(bucket?.credit);
+  return (bucket?.creditUnknown ?? 0) > 0 ? `${known} + ?` : known;
 }
 function mountUsage(ctx) {
   const s = strings(ctx);
@@ -477,13 +433,22 @@ function mountUsage(ctx) {
   const errLine = ui.msgline();
   sheet.body.append(errLine);
   const overview = ui.table({
-    head: ["", s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    head: [
+      "",
+      s.metricCalls,
+      s.metricFailed,
+      s.metricCredit,
+      s.metricInput,
+      s.metricOutput,
+      s.metricCached,
+      s.metricTotal
+    ],
     maxHeight: "220px"
   });
   sheet.body.append(overview.el);
   const modelSection = ui.section(s.byModel);
   const modelTable = ui.table({
-    head: [s.colModel, s.metricCalls, s.metricCredit, s.metricInput, s.metricOutput],
+    head: [s.colModel, s.metricCalls, s.metricFailed, s.metricCredit, s.metricInput, s.metricOutput, s.metricTotal],
     maxHeight: "260px"
   });
   modelSection.append(modelTable.el);
@@ -509,21 +474,43 @@ function mountUsage(ctx) {
   let state = null;
   function spanRow(label, bucket) {
     const b = bucket ?? {};
-    return [label, String(b.calls ?? 0), fmtNum(b.credit), fmtNum(b.prompt), fmtNum(b.completion)];
+    return [
+      label,
+      String(b.calls ?? 0),
+      String(b.failed ?? 0),
+      fmtCredit(b),
+      fmtNum(b.prompt),
+      fmtNum(b.completion),
+      fmtNum(b.cached),
+      fmtNum(b.total)
+    ];
   }
   function render() {
     const totals = state?.summary?.totals ?? {};
-    todayChip.textContent = `${s.todayCredit}: ${fmtNum(totals.today?.credit)} \xB7 ${s.todayTokens}: ${fmtNum(
+    todayChip.textContent = `${s.todayCredit}: ${fmtCredit(totals.today)} \xB7 ${s.todayTokens}: ${fmtNum(
       (totals.today?.prompt ?? 0) + (totals.today?.completion ?? 0)
     )}`;
     balanceChip.textContent = `${s.balanceTitle}: ${fmtNum(state?.balance?.total)}`;
-    const spans = [spanRow(s.spanToday, totals.today), spanRow(s.spanWeek, totals.week), spanRow(s.spanMonth, totals.month)];
+    const spans = [
+      spanRow(s.spanToday, totals.today),
+      spanRow(s.spanWeek, totals.week),
+      spanRow(s.spanMonth, totals.month),
+      spanRow(s.spanAll, totals.all)
+    ];
     overview.clear();
     for (const row of spans) overview.addRow(row);
     const byModel = state?.summary?.byModel ?? [];
     modelTable.clear(byModel.length > 0 ? void 0 : s.noData);
     for (const m of byModel) {
-      modelTable.addRow([m.model, String(m.calls ?? 0), fmtNum(m.credit), fmtNum(m.prompt), fmtNum(m.completion)]);
+      modelTable.addRow([
+        m.model,
+        String(m.calls ?? 0),
+        String(m.failed ?? 0),
+        fmtCredit(m),
+        fmtNum(m.prompt),
+        fmtNum(m.completion),
+        fmtNum(m.total)
+      ]);
     }
     const packages = state?.balance?.packages ?? [];
     pkgTable.clear(packages.length > 0 ? void 0 : s.noData);
@@ -620,7 +607,6 @@ var client_default = {
   panels: {
     models: { mount: mountModels },
     account: { mount: mountAccount },
-    priority: { mount: mountPriority },
     usage: { mount: mountUsage }
   }
 };

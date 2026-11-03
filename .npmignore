@@ -1,5 +1,7 @@
 # 打包时的排除项（`files` 白名单之外再排除）
 scripts/visual/
+.github/
+*.tgz
 *.log
 .env
 *.local

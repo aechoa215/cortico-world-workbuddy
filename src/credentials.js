@@ -28,7 +28,7 @@ const FRAMING_FIELD = 2;
 const FORMAT_FIELD = 'WBEV1';
 
 /**
- * WorkBuddy 数据目录候选（按平台）。国内版与国际版都扫。
+ * WorkBuddy 数据目录候选（按平台）。
  * @returns {string[]}
  */
 export function candidateCredentialDirs() {
@@ -294,11 +294,19 @@ export function resolveTokens(credential, payloadJson = process.env.WORKBUDDY_AT
 export function candidateAppExecutables() {
   const exe = [];
   if (platform() === 'win32') {
+    // 桌面端有 WorkBuddy / WorkBuddy AI 两种安装形态，目录名与 exe 名都可能带 AI：
+    // 只找 WorkBuddy.exe 时，另一种形态拿不到 at-rest 密钥（审查报告第 9 条）。
+    const dirs = ['WorkBuddy', 'WorkBuddy AI'];
+    const bins = ['WorkBuddy.exe', 'WorkBuddy AI.exe'];
     for (const env of ['LOCALAPPDATA', 'PROGRAMFILES', 'PROGRAMW6432', 'PROGRAMFILES(X86)']) {
       const root = process.env[env];
       if (!root) continue;
-      exe.push(join(root, 'Programs', 'WorkBuddy', 'WorkBuddy.exe'));
-      exe.push(join(root, 'WorkBuddy', 'WorkBuddy.exe'));
+      for (const dir of dirs) {
+        for (const bin of bins) {
+          exe.push(join(root, 'Programs', dir, bin));
+          exe.push(join(root, dir, bin));
+        }
+      }
     }
   }
   if (platform() === 'darwin') {

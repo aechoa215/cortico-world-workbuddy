@@ -24,6 +24,7 @@ import { classifyModel, CAUTION_MODEL_IDS, SAFE_MODEL_IDS } from '../src/safety.
 import { UsageLedger, dayKey, summarize } from '../src/usage.js';
 import { classifyHttpFailure, WbUpstream } from '../src/upstream.js';
 import { PANEL_METHODS, TOKEN_AUTO, TOKEN_CLEARED, WorkBuddyWorld } from '../src/world.js';
+import { runRegression } from './contract-regression.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const verbose = process.argv.includes('--verbose');
@@ -86,6 +87,7 @@ const used = new Set([...describe.envPrompt.matchAll(/\{\{(workbuddy\.[A-Za-z]+)
 const missing = [...used].filter((name) => !declared.has(name));
 ok(missing.length === 0, 'envPrompt 里每个 {{workbuddy.x}} 都有对应变量', missing);
 ok(used.size >= 8, `envPrompt 用到了 ${used.size} 个变量`);
+ok(!used.has('workbuddy.priority'), '环境提示词不再引用已删除的「中转站优先」开关', [...used]);
 
 const toolNames = describe.tools.map((t) => t.name).sort();
 ok(
@@ -175,6 +177,23 @@ ok(numeric.promoId === 'numeric', '数字时间戳（Unix 秒）的有效期被�
 const badZone = priceViewOf(models[2], NOW);
 ok(badZone.promoId === 'bad-zone', '非法时区退回 UTC 后窗口仍生效', badZone.promoId);
 
+const defaultZonePromo = parsePromos([{
+  id: 'default-zone', modelIds: ['glm-5.2'], discount: { discountedCredits: '0.50x', displayMode: 'replace' },
+  schedule: { daily: [{ start: '23:00', end: '7:50' }] },
+}], []);
+const defaultZoneModel = attachPromos([{ id: 'glm-5.2', credits: 'x0.79' }], defaultZonePromo)[0];
+ok(priceViewOf(defaultZoneModel, NOW).effective === 0.5, 'daily 省略 timezone 时按 Asia/Shanghai 判定', priceViewOf(defaultZoneModel, NOW));
+
+const dateOnlyPromo = parsePromos([{
+  id: 'date-only', modelIds: ['glm-5.2'], discount: { discountedCredits: '0.20x', displayMode: 'replace' },
+  schedule: { timezone: 'Asia/Shanghai', validFrom: '2026-11-03', validUntil: '2026-11-03' },
+}], []);
+const dateOnlyModel = attachPromos([{ id: 'glm-5.2', credits: 'x0.79' }], dateOnlyPromo)[0];
+ok(priceViewOf(dateOnlyModel, Date.parse('2026-11-03T00:00:00+08:00')).effective === 0.2, '纯日期 validFrom 从当地 00:00 生效', dateOnlyPromo[0].schedule);
+ok(priceViewOf(dateOnlyModel, Date.parse('2026-11-03T09:00:00+08:00')).effective === 0.2, '纯日期 validUntil 覆盖当天 08:00 之后', dateOnlyPromo[0].schedule);
+ok(priceViewOf(dateOnlyModel, Date.parse('2026-11-04T00:00:00+08:00')).effective === 0.79, '纯日期 validUntil 到次日当地 00:00 才失效');
+ok(priceViewOf(dateOnlyModel, Date.parse('2026-11-03T09:00:00+08:00')).absoluteText.endsWith('2026-11-03'), '纯日期有效期展示不写偏一天', priceViewOf(dateOnlyModel, NOW).absoluteText);
+
 /* ------------------------------------------------------------------- 安全 */
 
 console.log('· 安全清单');
@@ -208,7 +227,7 @@ const records = [
   { ts: nowMs - 3 * 864e5, model: 'glm-5.2', ok: true, promptTokens: 100, completionTokens: 50, totalTokens: 150, credit: 1.25, multiplier: 0.5 },
   { ts: nowMs - 40 * 864e5, model: 'hy3', ok: false, promptTokens: 0, completionTokens: 0, totalTokens: 0, credit: 0 },
 ];
-const summary = summarize(records, nowMs, { days: 30 });
+const summary = summarize(records, nowMs);
 ok(summary.totals.today.calls === 1, '今天只统计今天那条', summary.totals.today.calls);
 ok(summary.totals.week.calls === 2, '近 7 天含 3 天前那条', summary.totals.week.calls);
 ok(summary.totals.month.calls === 2, '近 30 天不含 40 天前那条', summary.totals.month.calls);
@@ -220,6 +239,10 @@ ok(
   '最近记录的字段名是 total/prompt/completion（面板按这三个名字读）',
 );
 ok(summary.byModel[0].model === 'glm-5.2', '按模型聚合按积分降序', summary.byModel.map((m) => m.model));
+const creditGap = summarize([{ ts: nowMs, model: 'glm-5.2', ok: true, totalTokens: 3 }], nowMs);
+ok(creditGap.totals.today.creditUnknown === 1, '上游未回传 credit 时计为未知，不静默算 0', creditGap.totals.today);
+ok(creditGap.recent[0].credit === null, '最近调用的未知 credit 保持 null，与明确 0 区分', creditGap.recent[0]);
+ok(!('windowDays' in summary) && !('spanDays' in summary), '未接线的 days/spanDays 参数与字段已删除');
 
 /* --------------------------------------------------------------- 回归防线 */
 
@@ -263,12 +286,10 @@ ok(
   autoWorld.lastError,
 );
 
-// 计费域：按区域，不按 baseUrl 猜；自定义 baseUrl 时跟着走同一出口
-const cnUp = new WbUpstream({ baseUrl: 'https://copilot.tencent.com', region: 'cn' });
-ok(cnUp.billingUrl('/x').startsWith('https://www.codebuddy.cn'), 'cn 计费域是 www.codebuddy.cn', cnUp.billingUrl('/x'));
-const globalUp = new WbUpstream({ baseUrl: 'https://www.workbuddy.ai', region: 'global' });
-ok(globalUp.billingUrl('/x').startsWith('https://www.workbuddy.ai'), 'global 计费域是 www.workbuddy.ai', globalUp.billingUrl('/x'));
-const proxyUp = new WbUpstream({ baseUrl: 'https://proxy.example.com', region: 'cn' });
+// 计费域：固定国内计费域，不按 baseUrl 猜；自定义 baseUrl 时跟着走同一出口
+const cnUp = new WbUpstream({ baseUrl: 'https://copilot.tencent.com' });
+ok(cnUp.billingUrl('/x').startsWith('https://www.codebuddy.cn'), '默认计费域是 www.codebuddy.cn', cnUp.billingUrl('/x'));
+const proxyUp = new WbUpstream({ baseUrl: 'https://proxy.example.com' });
 ok(proxyUp.billingUrl('/x') === 'https://proxy.example.com/x', '自定义 baseUrl 时计费走同一出口', proxyUp.billingUrl('/x'));
 
 // 429 的软/硬区分
@@ -281,11 +302,15 @@ ok(
   '账号面板允许 setToken',
 );
 ok(!PANEL_METHODS.usage.includes('setToken'), '用量面板不能间接写密钥库（白名单生效）');
-ok(
-  !PANEL_METHODS.priority.includes('host') && !PANEL_METHODS.priority.includes('repair'),
-  '0.3.0 删掉主页注入后，priority 面板不再有 host/repair',
-  PANEL_METHODS.priority,
-);
+ok(!('priority' in PANEL_METHODS), '0.3.4 移除「中转站优先」面板后不再有 priority 方法表', Object.keys(PANEL_METHODS));
+
+// 0.3.4：界面只剩 3 个面板，也不再声明 storage（宿主会据此生成空白「数据清理」页签）
+const uiWorld = makeWorld(TOKEN_CLEARED);
+const ui = uiWorld.webUi('zh');
+ok(ui.panels.map((p) => p.id).join(',') === 'models,account,usage', '0.3.4 面板只剩 models/account/usage', ui.panels.map((p) => p.id));
+ok(Array.isArray(ui.lamps) && ui.lamps.length === 2, '灯态只保留 WorkBuddy + 主进程两盏', ui.lamps?.length);
+ok(!('storage' in ui), '不再声明 storage（否则宿主会生成空的「数据清理」页签）');
+ok(!('prefer' in uiWorld.cfg), '配置里不再有 prefer 开关字段', Object.keys(uiWorld.cfg));
 
 // 账本并发：append 与 prune 串行，不互相覆盖
 const ledger = new UsageLedger({ dataDir: mkdtempSync(join(tmpdir(), 'wb-ledger-')), log: { warn: () => {} } });
@@ -306,21 +331,21 @@ ok(/^\d{4}-\d{2}-\d{2}$/.test(localDay), 'dayKey 输出 YYYY-MM-DD', localDay);
 // SSE：最后一段 data 没有换行时也要把 usage 处理掉（否则积分恒 0）
 const sseServer = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-  res.write('data: {"code":0,"choices":[{"delta":{"content":"嗨"}}]}\n\n');
-  // 末尾故意不带换行：老实现会把这段丢掉
-  res.write('data: {"code":0,"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10,"credit":0.02}}');
+  res.write('data: {"code":0,"choices":[{"delta":{"content":"嗨"}}],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}\n\n');
+  // 末尾只带 credit 且故意不带换行：既不能丢尾帧，也不能覆盖前帧 token。
+  res.write('data: {"code":0,"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"credit":0.02}}');
   res.end();
 });
 await new Promise((resolve) => sseServer.listen(0, '127.0.0.1', resolve));
 const sseUrl = `http://127.0.0.1:${sseServer.address().port}`;
-const sseUp = new WbUpstream({ baseUrl: sseUrl, region: 'cn' });
+const sseUp = new WbUpstream({ baseUrl: sseUrl });
 const chatOut = await sseUp.chat({ accessToken: 'test-token' }, { model: 'deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }], maxTokens: 64 }, () => {});
 sseServer.close();
 ok(chatOut.text === '嗨', 'SSE 正文拼接正确', chatOut.text);
 ok(chatOut.usage?.totalTokens === 10, 'SSE 尾行（无换行）里的 usage 被解析', chatOut.usage);
 ok(chatOut.credit === 0.02, 'SSE 尾行里的 credit 被解析', chatOut.credit);
 
-// start() 兜底：pushEvent 失败也不能把 started 卡住（否则四盏灯永远「正在读取登录态…」）
+// start() 兜底：pushEvent 失败也不能把 started 卡住（否则两盏灯永远「正在读取登录态…」）
 const startWorld = makeWorld(TOKEN_CLEARED);
 const failingHost = {
   log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -329,6 +354,9 @@ const failingHost = {
 await startWorld.start(failingHost);
 ok(startWorld.started === true, 'pushEvent 抛错时 start() 仍标记 started（灯态不卡住）');
 await startWorld.stop();
+
+// 0.3.1 审查报告新发现的回归防线（单独成文件，便于与上面 68 条基线区分）
+await runRegression(ok, { pkgDir });
 
 /* ------------------------------------------------------------------- 结果 */
 

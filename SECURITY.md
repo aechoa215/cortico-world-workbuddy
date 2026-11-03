@@ -11,34 +11,47 @@ judge the risk before installing.
 | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` | To learn your WorkBuddy login | `auth.accessToken`, `auth.refreshToken`, `auth.expiresAt`, `auth.domain`, `account` |
 | `%APPDATA%\WorkBuddy*\*.json` (if present) | Older WorkBuddy builds store the login here | same fields when stored in plain text |
 | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth` (fallback) | Same as above, directory scan | same fields |
-| `C:\Program Files\WorkBuddy\WorkBuddy.exe` | Only to ask the app for its own at-rest key | the key payload printed by the app's own `loggerGet()` binding; never stored |
-| `<Coopanion data>\home\companion\config.json` | Read/write `worlds.workbuddy` | region, model id, `prefer` flag |
+| `WorkBuddy.exe` / `WorkBuddy AI.exe` (known install locations) | Only to ask the app for its own at-rest key | the key payload printed by the app's own `loggerGet()` binding; never stored |
+| `<Coopanion data>\home\companion\config.json` | Read `worlds.workbuddy` | model id, `envPrompt` / `safeOnly` flags |
 
 The token is decrypted in memory only when the file is encrypted, is used only as the
 `Authorization: Bearer` header for WorkBuddy's own endpoints, and is never written anywhere except
 the Coopanion deployment `.env` if you paste one in the account panel yourself (the framework's
-`storeSecret`).
+`storeSecret`). Refresh tokens are never sent with chat requests.
 
 ## Where data goes
 
-Only three hosts, all WorkBuddy's:
+By default, only these two hosts, both WorkBuddy's:
 
-- `https://copilot.tencent.com` — model catalogue and chat completions (region `cn`)
-- `https://www.codebuddy.cn` — credit balance (region `cn`)
-- `https://www.workbuddy.ai` — catalogue, chat, credits (region `global`)
+- `https://copilot.tencent.com` — model catalogue and chat completions
+- `https://www.codebuddy.cn` — credit balance
 
-Nothing else. No logs contain tokens: every log line goes through `maskToken()`.
+If you set `worlds.workbuddy.baseUrl` (a proxy or mirror), **every** request — catalogue,
+chat and credit balance — goes to that host instead, and the token is sent there too. That is
+your own configuration choice, not a default. No other hosts are contacted. No logs contain
+tokens: every log line goes through `maskToken()`.
 
 ## What it writes
 
-- `<Coopanion data>/worlds/workbuddy/workbuddy-catalog.json` — cached model list, no credentials.
-- `worlds.workbuddy.*` in the companion config (region, model, `prefer`, `envPrompt`).
-- **Host files, only when the start-page button is injected:** `resources/app/build/console/index.html`
-  (0.3.0 removed the home-page injection; the extension no longer touches host files).
-  The original `index.html` is kept as `index.html.workbuddy-backup` next to it.
-  Nothing to undo — the extension does not modify Coopanion files anymore. Earlier versions
-  one-line reference by hand. A Coopanion update that replaces `build/console` simply removes the
-  injection; the extension puts it back on the next start.
+- `<Coopanion data>/home/companion/data/workbuddy-catalog.json` — cached model list, no credentials.
+- `<Coopanion data>/home/companion/data/workbuddy-usage.jsonl` and `workbuddy-balance.json` — local
+  usage ledger and credit snapshot, no tokens.
+- `worlds.workbuddy.*` in the companion config (model, `envPrompt`, `safeOnly`).
+- The deployment `.env` — only when you paste a token or clear it in the Account panel
+  (the sentinels `wb-cleared` / `wb-auto` are written there; a real token only if you pasted one).
+
+**Coopanion program files are never touched by the running extension.** Since 0.3.0 it does not
+inject anything into `resources/app/build/console` and keeps no backup of host files. Coopanion's
+own uninstall route removes only the package; it does not run extension cleanup code. After
+uninstalling, run `node scripts/clean-workbuddy.mjs --check`, then `--clean`, from the source tree.
+That explicit command removes only the `worlds.workbuddy` config block, the three data files above,
+and the `accessToken` line in `.env`; it preserves every other setting and secret and never prints
+the token. Ordinary `stop()` and restart never delete usage data.
+
+If you upgraded from 0.2.x, an old one-line `<script>` reference, `workbuddy-home.js` and
+`index.html.workbuddy-backup` may still be left over from that older version. Remove them once with
+`node scripts/clean-legacy-injection.mjs --clean` (`--check` lists what it would touch). Neither
+cleanup script runs automatically, and the extension never re-adds the injection.
 
 ## Reporting a vulnerability
 

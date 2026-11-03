@@ -1,5 +1,130 @@
 # 更新日志
 
+## 0.3.4
+
+按复核结论做减法：移除反复「假开启」的「中转站优先」功能，只保留可确认的事实。
+
+### 删掉的功能
+
+- **「中转站优先」整体移除**：详情页页签与复选框、`worlds.workbuddy.prefer` 配置、
+  `priority` 面板方法（`state` / `set` / `process`）、环境提示词里的「每轮先 `wb_chat`」强制规则、
+  第三盏「中转站优先」灯，以及主进程退出时自动熄灯的逻辑全部删除。`wb_*` 工具改为按需调用：
+  Coo 在用户点名 WorkBuddy 或明显更合适时才调用，不再每轮强制消耗积分。
+- **`storage: [{ key: 'workbuddy-catalog' }]` 声明删除**：宿主不再为本扩展生成空的「数据清理」页签。
+- **死代码**：`world.js` 的 `canRelay`、未使用的 `dailyWindowText` / `DEFAULT_SAFE_MODEL` /
+  `SAFE_MODEL_IDS` 导入，`wbproc.js` 的 `describeProc`，`upstream.js` 里永远为空的
+  `X-User-Id` / `X-Domain` 请求头，一并删除。
+
+### 修正
+
+- **主进程状态改为只读**：放在「模型目录」面板顶部（6 秒轮询，状态翻转才推送），不再参与任何开关。
+- **优惠状态判定**：`wb_list_models` 的「生效中 / 即将生效」改用 `promoActiveAt()`，
+  只有徽标、不改价的促销不再被误标成「即将生效」。
+- **环境提示词收敛**：倍率说明改成「模型自身价格 + 本桥接此刻能核实的限时改价（含免费窗口）」，
+  并明确「只挂徽标的优惠可能不改价」；`{{workbuddy.priority}}` 变量与其段落删除。
+- 契约与 UI 验证同步更新：断言没有 `priority` 面板、只有两盏灯、无 `storage`、配置无 `prefer`；
+  UI 脚本改为断言页签不含「是否启用 WorkBuddy」与「数据清理」。
+
+## 0.3.3
+
+按 0.3.2 审查结果修复现有功能，不新增模型、面板或上游能力。
+
+- **折扣时间**：纯日期 `validFrom` / `validUntil` 按 `schedule.timezone` 的当地午夜解释，
+  `validUntil` 包含所写日期的整日；`daily` 省略时区时默认 `Asia/Shanghai`，非法时区仍回退 UTC。
+- **用量准确性**：分段 SSE `usage` 改为逐字段合并，末帧只有 `credit` 时不再丢 token；
+  未回传积分与明确 0 积分分开统计，面板以 `+ ?` 标出未知缺口；账本补记折扣前倍率，
+  并在响应完成时取倍率，避免跨折扣窗口写旧值。
+- **只做减法**：删除未接线的 `usageState(days)`、`spanDays` / `windowDays`；按模型表固定为
+  近 30 天并明确标注，与概览同口径。
+- **开关就绪**：环境提示词与第三盏灯同时检查主进程、登录态和已选模型，模型为空时不再假开启。
+- **卸载清理**：新增显式 `scripts/clean-workbuddy.mjs --check | --clean`，只清本扩展的配置块、
+  三份数据文件与 `.env` 的 `accessToken` 行。普通 `stop()` / 重启不删数据；宿主界面卸载后
+  执行该脚本即可无残留，其他配置和密钥不受影响。
+- 文案只称“本机已登录的 WorkBuddy 客户端”，删除多余的区域版本区分。
+
+## 0.3.2
+
+只桥接本机已登录的 WorkBuddy 桌面端，不再提供区域切换；同时把「用量」面板对齐宿主的
+「用量与成本」口径。仍然只在本机验证，未推送 / 未发布。
+
+### 删掉的功能
+
+- **区域（region）配置整体移除**：`worlds.workbuddy.region`、`WB_REGION_BASE`、区域枚举与
+  对应的上游 / 计费域切换全部删除。扩展现在固定走
+  `copilot.tencent.com`（目录 / 对话）与 `www.codebuddy.cn`（积分）；自定义 `baseUrl` 仍可用，
+  它同时替换这两个域。README、SECURITY、CHANGELOG、`describe.json`、环境提示词里的相关文案同步删除。
+- 环境提示词不再输出 `workbuddy.region` 变量；`catalog.json` 与账本里也不再写 `region` 字段
+  （旧文件里的该字段读入后直接忽略）。
+
+### 修正
+
+- **开关可以「假开启」**：`priority/set` 以前只检查主进程，登录态失效或没选模型时也能点亮，
+  结果每轮 `wb_chat` 都失败。现在开启前依次校验主进程、登录态、模型目录，分别返回
+  `no-process` / `no-auth` / `no-model`，面板按原因提示；没有选过模型时自动落到
+  `preferredSafeModel(safeModelIds())` 并持久化。
+- **环境提示词与实际状态脱节**：`workbuddy.priority` 只有在「开关开 + 主进程在跑 + 已登录」
+  时才输出 `on`，避免提示词命令桌宠调用一个必然失败的通道。
+- `loadTokens()` / `setToken()` 成功时清空 `lastError`，登录态恢复后面板不再挂着旧错误。
+- `usageState(days)` 支持区间参数（0/1/7/30/90，默认 30）；`summarize().spanDays` 不再恒为 1。
+- 面板「用量」改名「用量与成本」：区间概览新增失败数、缓存命中、合计 token 与「全部」一行，
+  按模型聚合同样补上失败数与合计 token；数据仍全部来自账本，不新增任何存储。
+- `world.js` 构造器补上漏声明的 `_procConfirm`，删掉 0.3.0 遗留的孤儿 JSDoc。
+
+## 0.3.1
+
+按 0.3.0 审查报告复核并修复（仍只在本机验证，未推送 / 未发布）。
+
+### 高 / 中优先级
+
+- **`/v3/config` 401/403 的错误分类（最严重）**：`upstream.js` 把 `kind` 字符串当成
+  `WbUpstreamError` 的第二参（`info` 对象）传，错误恒为 `kind='server'`、`status=0`；
+  连锁导致 `models.refresh` 不返回 `noAuth`、`toolChat` 不清 token、前端不提示重新登录。
+  现在传 `{ status: 401|403, kind: 'session_dead' }`；`fetchCatalog` 每次重置认证标记，
+  `fetchModelsLegacy` 的 403 也判 `session_dead`。
+- **`dailyUnusable` 恒为 false**：`parseSchedule` 过滤后 `daily` 是 `[]` 而不是 `undefined`，
+  写错的时段会被当成「全天打折」。现在按「上游给了时段但一条都解析不出来」判定，
+  并让该促销按「不生效」处理（宁可少报一次折扣）。
+- **`rediscover` 静默覆盖手动 token**：手动粘贴 token 后点「重新检测」，0.3.0 仍写
+  `wb-auto` 把密钥库里的真 token 覆盖掉，重启后丢失。现在只有密钥库里确实是
+  `wb-cleared` 登出哨兵、且探测成功时才改写。
+- **「今日积分」跨午夜不归零**：新增 `localDay()` / `rollTodayIfNeeded()`，
+  `envPromptVars()` / `webUi()` / `toolChat()` 累加前都翻篇；详情页徽标、环境提示词与
+  用量面板 `summary.totals.today` 从此一致。
+- **发布流程**：Release 不再与 CI 各自监听 `v*` tag。现在 `release.yml` 里 `publish`
+  `needs: verify`（同一条流水线跑 contract / 构建 / dist 一致性），CI 校验没过就不会发布；
+  `ci.yml` 只负责 push/PR，tag 触发交给 Release。
+- **0.2.x 升级残留**：新增 `scripts/clean-legacy-injection.mjs`（`--check` / `--clean`，
+  幂等、只删本扩展留下的三样东西、绝不覆盖 `index.html` 其他内容）。扩展本体仍
+  **一个字节都不改宿主文件**，清理是用户主动跑的一次性迁移工具。
+- **SECURITY.md 自相矛盾**：删掉「下次启动会重新注入」的残句，写清 0.3.0 起不碰宿主、
+  自定义 `baseUrl` 时 token 会发往该主机、可执行文件覆盖两种安装形态。
+- **`refresh()` 死代码**：`WbUpstream.refresh()` 与 `/v2/auth/refresh` 全仓库无调用点，
+  README 原理图却列了它。现在删掉未接入的实现与原理图那一行，如实写明
+  「登录态失效 → 重新从本机凭据发现」；`credentials.js` 仍解析 `refreshToken`（不外发），
+  chat 请求绝不携带它。
+- **`candidateAppExecutables()` 漏 `WorkBuddy AI.exe`**：桌面端两种安装形态的目录名与
+  exe 名都覆盖，另一种形态也能自动解封 at-rest 密钥。
+
+### 低优先级 / 一致性
+
+- `wb_chat` 描述补回 "Requires the WorkBuddy desktop app to be running"（`WB_TOOL_DECLS`、
+  `definition.js`，`describe.json` 重新生成）。
+- 英文面板不再写已删除的「开始页 Relay first 按钮」；`dist/webui.js` 重新构建。
+- `writeBalance()` 走与账本同一条写队列、临时文件名带 pid；`usageState()` 只在确有
+  超期行时才整文件重写账本。
+- `clearToken` 当下就写 `lastError`（可操作提示不必等重启）；`tools()` handler 不再假设
+  `args` 一定存在；`offlineChecks()` 与 CI 语法检查覆盖 `scripts/lib/*.mjs`；
+  `reinstall.ps1` 删掉空 `if` 死代码。
+- README 统一：CI 是「改跑离线检查」而非「跳过」、三个域名口径、版本号与安装示例。
+- `reinstall.ps1` 的 `npm pack` 不再被误判：Windows PowerShell 5.1 在
+  `$ErrorActionPreference='Stop'` 下把 npm 的 stderr `notice` 当 `NativeCommandError` 抛出，
+  于是静默退回手工 tar、绕过 `prepack`（审查报告第 6 条的真正触发点）。现在临时降为
+  `Continue` 并按真实退出码判断，打包必走 `prepack`。
+- `contract.mjs` 从 68 条扩到 95 条（+27）：新增 `scripts/contract-regression.mjs`
+  承载 0.3.1 回归防线（session_dead 分类与不降级、无效时段不打折、
+  rediscover 不覆盖手动 token、跨日归零、两种安装形态、余额快照并发写），
+  并修掉 0.3.0 的断言数量口径（声称「补 25 条」，实际 55→68 只 +13）。
+
 ## 0.3.0
 
 **撤除主界面注入，并按复检报告修掉 9 处中优先级问题。**
@@ -63,8 +188,8 @@
 - **`clearToken` 真的清得掉**：写不清空时返回失败不再是「假成功」；清空后写哨兵 `wb-cleared`，
   `loadTokens()` 见到哨兵就当作已登出（`rediscover` 才回落到本机凭据库）。
 - **`/v3/config` 失败不再静默**：非 2xx、空数据、无模型条目分别打警告，方便判断是不是被降级到旧接口。
-- **计费域按区域选**：`WbUpstream` 现在接收 `region`，`billingUrl()` 用 `WB_BILLING_BASE[region]`
-  （以前按域名子串猜，自定义 `baseUrl` 会掉到国际计费域 `www.workbuddy.ai`）。
+- **计费域固定**：`WbUpstream` 的 `billingUrl()` 使用 `WB_BILLING_BASE`
+  （早期版本按域名子串猜，自定义 `baseUrl` 时会掉到错误的计费域）。
 - **SSE 收尾不再丢 usage**：流结束时 `decoder.decode()` 冲刷残留字节，并把最后一段没有换行的 `data:`
   交给同一解析器 —— 以前末尾那段（正好带 `usage`）会被丢掉。
 - **429 两种性质分开**：`classifyHttpFailure()` 按文案把「额度耗尽」判成 `hard_credit`，其余 429 才是

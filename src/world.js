@@ -7,12 +7,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { WB_CONFIG_GROUP } from './config.js';
-import { WB_REGION_BASE, WbUpstream, WbUpstreamError } from './upstream.js';
+import { WB_BASE, WbUpstream, WbUpstreamError } from './upstream.js';
 import { discoverCredentials, maskToken, resolveTokensWithKey } from './credentials.js';
 import { detectWorkBuddy } from './wbproc.js';
-import { attachPromos, dailyWindowText, discountText, priceViewOf, promoActiveAt } from './promo.js';
+import { attachPromos, discountText, priceViewOf, promoActiveAt } from './promo.js';
 import { UsageLedger, summarize } from './usage.js';
-import { DEFAULT_SAFE_MODEL, SAFE_MODEL_IDS, classifyModel, preferredSafeModel, safeGroupsOf } from './safety.js';
+import { classifyModel, preferredSafeModel, safeGroupsOf } from './safety.js';
 
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -22,13 +22,9 @@ const CATALOG_FILE = 'workbuddy-catalog.json';
 const L10N = {
   zh: {
     noAuth: '未发现本机 WorkBuddy 登录态。请先登录 WorkBuddy 客户端，或在「账号」面板手动粘贴 access token。',
-    catalogEmpty: '模型目录为空，请在「模型目录」面板点「从 WorkBuddy 刷新」。',
-    noModel: '尚未选择模型。请在「模型目录」面板选一个模型。',
   },
   en: {
     noAuth: 'No local WorkBuddy sign-in found. Sign in the WorkBuddy desktop app, or paste an access token in the Account panel.',
-    catalogEmpty: 'Model catalog is empty. Click "Refresh from WorkBuddy" in the Models panel.',
-    noModel: 'No model selected. Pick one in the Models panel.',
   },
 };
 
@@ -71,7 +67,7 @@ export const WB_TOOL_DECLS = [
   {
     name: 'wb_chat',
     description:
-      'Ask the selected WorkBuddy model a single-turn question and return its answer. This spends the user\'s own WorkBuddy credits at the model\'s multiplier; keep prompts concise. Use the model parameter only to override the selected model for one call.',
+      'Ask the selected WorkBuddy model a single-turn question and return its answer. This spends the user\'s own WorkBuddy credits at the model\'s multiplier; keep prompts concise. Use the model parameter only to override the selected model for one call. Requires the WorkBuddy desktop app to be running.',
     tags: ['write'],
     parameters: {
       type: 'object',
@@ -119,7 +115,6 @@ export const TOKEN_AUTO = 'wb-auto';
  * 调到 `setToken` / `clearToken`（会写框架的密钥库）。
  */
 export const PANEL_METHODS = {
-  priority: ['state', 'set', 'process'],
   usage: ['state', 'refresh', 'clear'],
   models: ['state', 'refresh', 'select'],
   account: ['state', 'rediscover', 'credits', 'setToken', 'clearToken'],
@@ -151,11 +146,9 @@ export class WorkBuddyWorld {
     this.proc = { running: false, pids: [], mainPid: null, via: 'unknown', detail: '', at: 0 };
     /** @type {ReturnType<typeof setInterval> | null} */
     this._procTimer = null;
-    /**
-     * 0.3.0 起不再往宿主主界面注入按钮：这里只剩「中转站优先」开关本身的状态。
-     * @type {null | { appRoot: string, consoleDir: string, htmlPath: string, ok: boolean, reason: string, changed: string[], checkedAt: number }}
-     */
-    /** @type {ReturnType<typeof setInterval> | null} */
+    /** 启动后 1.2 秒的二次确认定时器（防桌面端枚举慢半拍）。 */
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._procConfirm = null;
     /**
      * 目录里带进来的促销 / 档位（/v3/config 的 modelPromotions + modelTiers）。
      * 倍率不能只看模型的 credits：夜间折扣、限时免费都挂在这些条目上。
@@ -181,11 +174,11 @@ export class WorkBuddyWorld {
   }
 
   baseUrl() {
-    return this.cfg.baseUrl || WB_REGION_BASE[this.cfg.region] || WB_REGION_BASE.cn;
+    return this.cfg.baseUrl || WB_BASE;
   }
 
   upstream() {
-    return new WbUpstream({ baseUrl: this.baseUrl(), region: this.cfg.region, log: this.log });
+    return new WbUpstream({ baseUrl: this.baseUrl(), log: this.log });
   }
 
   catalogPath() {
@@ -193,7 +186,7 @@ export class WorkBuddyWorld {
   }
 
   // -------------------------------------------------------------------------
-  // WorkBuddy 主进程检测（「中转站优先」的前提条件）
+  // WorkBuddy 主进程检测（灯态、面板只读状态与 wb_* 工具共用）
   // -------------------------------------------------------------------------
 
   /**
@@ -212,7 +205,7 @@ export class WorkBuddyWorld {
         at: state.at ?? Date.now(),
       };
       // 「在跑 → 没在跑」这种翻转要多看一眼：tasklist 在系统忙时偶尔漏一行，
-      // 一次误判就会把「中转站优先」自动熄灭。确认一次再落定，避免抖动。
+      // 一次误判就会让灯态闪成「未检测到主进程」。确认一次再落定，避免抖动。
       if (!next.running && this.proc?.running && next.via !== 'error') {
         await new Promise((r) => setTimeout(r, 300).unref?.());
         const again = await detectWorkBuddy(true);
@@ -239,51 +232,6 @@ export class WorkBuddyWorld {
     return this.proc;
   }
 
-  /** 「中转站优先」是否打开。默认关。 */
-  get preferOn() {
-    return this.cfg.prefer === true;
-  }
-  /** 未开优先、或主进程没在跑时，真正能走中转站吗？ */
-  get canRelay() {
-    return this.preferOn && this.proc.running;
-  }
-
-  /**
-   * 开关的唯一写入口：World 详情页「是否启用Workbuddy」勾选框打这里。
-   * @param {boolean} on
-   */
-  async setPrefer(on) {
-    const value = on === true;
-    this.cfg.prefer = value;
-    try {
-      this.ctx.persist({ prefer: value });
-    } catch (err) {
-      this.log.warn?.(`workbuddy: 保存「中转站优先」失败：${err?.message ?? err}`);
-    }
-    // 用缓存采样即可：定时器每 6s 刷一次，点开关不该卡在 tasklist 上。
-    await this.syncProc();
-    const state = this.priorityState();
-    this.broadcast({ kind: 'priority', ...state });
-    return state;
-  }
-
-  /** 「中转站优先」面板用的状态对象。 */
-  priorityState() {
-    return {
-      /** @type {boolean} */
-      prefer: this.preferOn,
-      /** @type {boolean} */
-      running: !!this.proc.running,
-      mainPid: this.proc.mainPid,
-      via: this.proc.via,
-      model: this.cfg.model || '',
-      region: this.cfg.region,
-      authed: !!this.tokens,
-      catalogSize: this.catalog.length,
-      checkedAt: this.proc.at,
-    };
-  }
-
   // -------------------------------------------------------------------------
   // 凭据：手动粘贴（密钥库）优先，其次本机发现
   // -------------------------------------------------------------------------
@@ -300,6 +248,7 @@ export class WorkBuddyWorld {
     if (manual === TOKEN_AUTO) manual = null;
     if (manual && !signedOut) {
       this.tokens = { accessToken: manual, source: 'manual' };
+      this.lastError = '';
       return this.tokens;
     }
     // 用户显式登出后，不再偷偷从数据目录里把凭据读回来——否则「清除」等于没生效。
@@ -315,6 +264,7 @@ export class WorkBuddyWorld {
       const resolved = await resolveTokensWithKey(found.credential);
       if (resolved.accessToken) {
         this.tokens = resolved;
+        this.lastError = '';
         return this.tokens;
       }
       this.lastError = found.encrypted
@@ -359,7 +309,6 @@ export class WorkBuddyWorld {
         JSON.stringify(
           {
             at: Date.now(),
-            region: this.cfg.region,
             source: this.catalogSource,
             models: this.catalog,
             promos: this.promos,
@@ -429,19 +378,18 @@ export class WorkBuddyWorld {
 
   envPromptVars() {
     if (!this.cfg.envPrompt) return null;
+    this.rollTodayIfNeeded(); // 跨过午夜后提示词里的「今日积分」不能还累计昨天
     const price = this.priceOf(this.cfg.model);
     const promoBit =
       price && price.promoId !== undefined && typeof price.effective === 'number'
         ? `（限时 ${discountText(this.promos.find((p) => p.id === price.promoId)) || '优惠'}${price.windowText ? ` ${price.windowText}` : ''}）`
         : '';
     return {
-      'workbuddy.region': this.cfg.region === 'global' ? 'international' : 'domestic (CN)',
       'workbuddy.model': this.cfg.model || '(none selected)',
       'workbuddy.multiplier':
         price && typeof price.effective === 'number' ? `x${price.effective}${promoBit}` : '(unknown)',
       'workbuddy.catalogSize': String(this.catalog.length),
       'workbuddy.authed': this.tokens ? 'yes' : 'no',
-      'workbuddy.priority': this.preferOn ? 'on' : 'off',
       'workbuddy.process': this.proc.running ? 'running' : 'stopped',
       'workbuddy.safeOnly': this.cfg.safeOnly === false ? 'off' : 'on',
       'workbuddy.todayCredit': String(Math.round(this.today.credit * 100) / 100),
@@ -457,15 +405,15 @@ export class WorkBuddyWorld {
       },
       {
         ...WB_TOOL_DECLS[1],
-        handler: async (args) => this.toolSelectModel(String(args.model ?? '')),
+        handler: async (args) => this.toolSelectModel(String(args?.model ?? '')),
       },
       {
         ...WB_TOOL_DECLS[2],
         handler: async (args) =>
           this.toolChat({
-            prompt: String(args.prompt ?? ''),
-            model: typeof args.model === 'string' ? args.model : undefined,
-            system: typeof args.system === 'string' ? args.system : undefined,
+            prompt: String(args?.prompt ?? ''),
+            model: typeof args?.model === 'string' ? args.model : undefined,
+            system: typeof args?.system === 'string' ? args.system : undefined,
           }),
       },
       {
@@ -479,7 +427,7 @@ export class WorkBuddyWorld {
     this.host = host;
     this.started = false;
     // 整个启动流程包在 try/finally 里：任何一步抛错（网络、文件、宿主事件）都不能让
-    // `started` 永远停在 false——那会让四盏灯一直显示「正在读取登录态…」。
+    // `started` 永远停在 false——那会让两盏灯一直显示「正在读取登录态…」。
     try {
       this.loadCatalogFromDisk();
       await this.loadTokens();
@@ -489,9 +437,15 @@ export class WorkBuddyWorld {
           const before = this.proc.running;
           try {
             const state = await this.syncProc(true);
-            if (state.running !== before) this.broadcast({ kind: 'process', ...this.priorityState() });
-            // 主进程退出后中转站不可能再用：把「中转站优先」一并熄灭，避免界面亮着却调不通。
-            if (!state.running && this.preferOn) await this.setPrefer(false);
+            // 只在「在跑 / 没在跑」真正翻转时推一次，避免每 6 秒让面板重绘。
+            if (state.running !== before) {
+              this.broadcast({
+                kind: 'process',
+                running: state.running,
+                mainPid: state.mainPid,
+                via: state.via,
+              });
+            }
           } catch {
             /* 探测失败不改状态，等下一次 */
           }
@@ -501,7 +455,9 @@ export class WorkBuddyWorld {
       // 刚启动时探测偶尔比桌面端枚举慢半拍：1.2 秒后再确认一次，免得界面先亮出「未检测到主进程」。
       this._procConfirm = setTimeout(() => {
         void this.syncProc(true)
-          .then(() => this.broadcast({ kind: 'process', ...this.priorityState() }))
+          .then((state) =>
+            this.broadcast({ kind: 'process', running: state.running, mainPid: state.mainPid, via: state.via }),
+          )
           .catch(() => {});
       }, 1200);
       this._procConfirm.unref?.();
@@ -530,7 +486,7 @@ export class WorkBuddyWorld {
           origin: 'internal',
           senderKey: this.id,
           text: this.tokens
-            ? `WorkBuddy 桥接已挂载：${this.cfg.region} 区，目录 ${this.catalog.length} 个模型，当前模型 ${this.cfg.model || '(未选)'}。`
+            ? `WorkBuddy 桥接已挂载：目录 ${this.catalog.length} 个模型，当前模型 ${this.cfg.model || '(未选)'}。`
             : 'WorkBuddy 桥接已挂载，但未发现登录态；wb_* 工具暂不可用。',
         });
       } catch (err) {
@@ -614,7 +570,9 @@ export class WorkBuddyWorld {
         const base = this.findModel(p.modelIds[0]);
         const view = priceViewOf({ ...(base ?? { id: p.modelIds[0] }), promos: [p] }, now);
         const when = view.windowText || view.absoluteText || '';
-        const flag = view.promoId === p.id ? '生效中' : view.badgeActive ? '即将生效' : '未生效';
+        // 生效与否只看时段（promoActiveAt）：只挂徽标、不改价的促销没有 promoId，
+        // 拿「是否改价」判断会把正在生效的徽标类活动标成「即将生效」。
+        const flag = promoActiveAt(p, now) ? '生效中' : view.badgeActive ? '即将生效' : '未生效';
         return `- ${p.id}：${discountText(p)}${when ? `，${when}` : ''}，影响 ${p.modelIds.join('/')}（${flag}）`;
       });
     const promoBlock = promoLines.length > 0 ? `\n限时优惠：\n${promoLines.join('\n')}` : '';
@@ -656,7 +614,7 @@ export class WorkBuddyWorld {
 
   async toolChat({ prompt, model, system }) {
     if (!prompt) return { text: 'prompt 不能为空。', failed: true };
-    // 中转站可用的前提：WorkBuddy 桌面端主进程在跑。
+    // 桥接可用的前提：WorkBuddy 桌面端主进程在跑。
     await this.syncProc();
     if (!this.proc.running) {
       return { text: '未检测到 WorkBuddy 主进程：请先启动 WorkBuddy 桌面端再试。', failed: true };
@@ -676,12 +634,11 @@ export class WorkBuddyWorld {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     messages.push({ role: 'user', content: prompt });
-    const price = this.priceOf(useId);
     const startedAt = Date.now();
     /** 记一笔账本；失败不影响本次调用的回执。 */
     const record = async (entry) => {
       try {
-        await this.ledger.append({ ts: startedAt, model: useId, region: this.cfg.region, source: this.tokens?.source ?? '', ...entry });
+        await this.ledger.append({ ts: startedAt, model: useId, source: this.tokens?.source ?? '', ...entry });
       } catch (err) {
         this.log.warn?.(`workbuddy: 用量落盘失败：${err?.message ?? err}`);
       }
@@ -693,6 +650,8 @@ export class WorkBuddyWorld {
         () => {},
       );
       const durationMs = Date.now() - startedAt;
+      // 用响应完成时的价格记账，避免请求跨过折扣边界后仍写发起时的旧倍率。
+      const price = this.priceOf(useId);
       const used = typeof usage?.credit === 'number' ? usage.credit : credit;
       await record({
         ok: true,
@@ -703,9 +662,14 @@ export class WorkBuddyWorld {
         reasoningTokens: usage?.reasoningTokens,
         credit: used,
         multiplier: price?.effective,
+        baseMultiplier: price?.base,
         promoId: price?.promoId,
         durationMs,
       });
+      // 跨午夜后先把今日小计翻篇，否则连续运行的 Coopanion 会把昨天的用量
+      // 继续累加到今天的徽标 / envPrompt（用量面板的 summary.totals.today 是对的，
+      // 两处「今日积分」互相矛盾 —— 审查报告第 4 条）。
+      this.rollTodayIfNeeded();
       if (typeof used === 'number') this.today.credit += used;
       this.today.calls += 1;
       if (typeof usage?.promptTokens === 'number') this.today.prompt += usage.promptTokens;
@@ -762,6 +726,7 @@ export class WorkBuddyWorld {
   // -------------------------------------------------------------------------
 
   webUi(language) {
+    this.rollTodayIfNeeded(); // 详情页徽标同样要跟着本地日期翻篇
     const zh = language !== 'en';
     return {
       label: zh ? 'WorkBuddy 桥接' : 'WorkBuddy Bridge',
@@ -784,14 +749,8 @@ export class WorkBuddyWorld {
               ? '未检测到 WorkBuddy 主进程'
               : '正在检测 WorkBuddy 主进程…',
         },
-        {
-          label: zh ? '中转站优先' : 'Relay first',
-          state: this.preferOn ? 'online' : 'offline',
-          hint: this.preferOn ? '开：桌宠优先走 WorkBuddy 模型' : '关：跳过 WorkBuddy',
-        },
       ],
       badges: [
-        { label: zh ? '区域' : 'Region', value: this.cfg.region, tone: 'plain' },
         {
           label: zh ? '当前模型' : 'Model',
           value: this.cfg.model || '—',
@@ -827,19 +786,11 @@ export class WorkBuddyWorld {
           getMethods: ['state'],
         },
         {
-          id: 'priority',
-          title: zh ? '是否启用 WorkBuddy' : 'Enable WorkBuddy',
-          description: zh
-            ? '打开后桌宠每轮对话优先调用 WorkBuddy 的模型，关闭则完全跳过。默认为关。需要 WorkBuddy 桌面端主进程在运行。'
-            : 'When on, the pet asks a WorkBuddy model first every turn; when off, WorkBuddy is skipped entirely. Off by default. Requires the WorkBuddy desktop app to be running.',
-          getMethods: ['state'],
-        },
-        {
           id: 'usage',
-          title: zh ? '用量' : 'Usage',
+          title: zh ? '用量与成本' : 'Usage & cost',
           description: zh
-            ? '本机记账的调用用量（积分与 token）、WorkBuddy 积分包余额，以及当前生效的限时折扣 / 免费。'
-            : 'Call usage recorded locally (credits and tokens), WorkBuddy credit balance, and currently active time-limited discounts / free tiers.',
+            ? '经由 WorkBuddy 消耗的 token 量与积分量（本地记账）、积分包余额，以及当前生效的限时折扣 / 免费。'
+            : 'Tokens and credits spent through WorkBuddy (locally recorded), the credit balance, and currently active time-limited discounts / free tiers.',
           getMethods: ['state'],
         },
       ],
@@ -851,12 +802,10 @@ export class WorkBuddyWorld {
           path: ENV_PROMPT_FILE,
           role: 'envPrompt',
           vars: [
-            { name: 'workbuddy.region', description: '桥接的区域（国内 / 国际）。' },
             { name: 'workbuddy.model', description: '当前选用的模型 id。' },
             { name: 'workbuddy.multiplier', description: '所选模型的默认积分倍率。' },
             { name: 'workbuddy.catalogSize', description: '目录里模型的数量。' },
             { name: 'workbuddy.authed', description: '是否已有可用登录态。' },
-            { name: 'workbuddy.priority', description: '「中转站优先」开关：on / off。' },
             { name: 'workbuddy.process', description: 'WorkBuddy 主进程状态：running / stopped。' },
             { name: 'workbuddy.safeOnly', description: '安全清单闸门：on（只放行公开对话模型）/ off。' },
             { name: 'workbuddy.todayCredit', description: '今日已消耗积分（本地记账）。' },
@@ -864,10 +813,9 @@ export class WorkBuddyWorld {
           ],
         },
       ],
-      storage: [{ key: 'workbuddy-catalog', label: zh ? '模型目录缓存' : 'Model catalog cache' }],
       invoke: (panel, method, args) => this.handleInvoke(panel, method, args, language),
       stream: (panel, socket) => {
-        if (panel !== 'models' && panel !== 'account' && panel !== 'priority' && panel !== 'usage') {
+        if (panel !== 'models' && panel !== 'account' && panel !== 'usage') {
           socket.close('unknown panel');
           return;
         }
@@ -915,12 +863,19 @@ export class WorkBuddyWorld {
    *
    * 口径：积分以每次调用 SSE 里的 `usage.credit` 为准（上游真实扣费）；
    * 倍率只用于「预估/解释」，不拿它去折算金额。
+   *
    */
   async usageState() {
     const now = Date.now();
-    await this.ledger.prune(now);
-    const records = await this.ledger.readAll();
-    const summary = summarize(records, now, { days: 30 });
+    // 0.3.0 每次打开面板都整文件重写一遍账本（prune 无条件执行）。只有确实存在
+    // 超期行时才裁，且裁完重新读，保证聚合用的是裁剪后的内容。
+    let records = await this.ledger.readAll();
+    const cutoff = now - 90 * 864e5;
+    if (records.some((r) => typeof r.ts !== 'number' || r.ts < cutoff)) {
+      await this.ledger.prune(now);
+      records = await this.ledger.readAll();
+    }
+    const summary = summarize(records, now);
     const balance = this.lastBalance ?? (await this.ledger.readBalance());
     const promos = this.promos.map((promo) => {
       const firstId = Array.isArray(promo.modelIds) ? promo.modelIds[0] : undefined;
@@ -953,22 +908,36 @@ export class WorkBuddyWorld {
       catalogAt: this.catalogAt,
       model: this.cfg.model,
       price: this.priceOf(this.cfg.model),
-      region: this.cfg.region,
       running: !!this.proc.running,
       authed: !!this.tokens,
     };
   }
 
-  /** 从账本重算今日小计（启动时 + 每次调用后调用）。 */
+  /** 本地日期键 YYYY-MM-DD（与 usage.dayKey 同口径，绝不用 toISOString 的 UTC 日期）。 */
+  localDay(ms = Date.now()) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * 跨过本地午夜后把「今日」小计归零。
+   *
+   * envPromptVars() / webUi() 是同步的，不能在这里 await 账本；先把过期的计数清掉，
+   * 下一次 refreshToday()（启动、清空账本）再从账本重算精确值。
+   */
+  rollTodayIfNeeded() {
+    const day = this.localDay();
+    if (this.today.day === day) return this.today;
+    this.today = { day, credit: 0, calls: 0, prompt: 0, completion: 0 };
+    return this.today;
+  }
+
+  /** 从账本重算今日小计（启动时 + 清空账本时调用）。 */
   async refreshToday() {
     const records = await this.ledger.readAll();
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    // 用本地日期，不用 toISOString()：后者是 UTC，在 UTC+8 的 00:00–08:00 之间
-    // 会得到「昨天」，面板上的「今天」就会指错一天。
-    const day = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(
-      start.getDate(),
-    ).padStart(2, '0')}`;
+    const day = this.localDay(start.getTime());
     const today = { day, credit: 0, calls: 0, prompt: 0, completion: 0 };
     for (const r of records) {
       if (typeof r?.ts !== 'number' || r.ts < start.getTime()) continue;
@@ -1002,31 +971,6 @@ export class WorkBuddyWorld {
     if (!allowed) throw new Error(`unknown panel: ${panel}`);
     if (!allowed.includes(method)) throw new Error(`panel ${panel} 不支持方法 ${method}`);
 
-    // 「中转站优先」：详情页开关走这组方法，状态只有一个来源。
-    if (panel === 'priority') {
-      if (method === 'state') {
-        await this.syncProc();
-        return { ok: true, ...this.priorityState() };
-      }
-      if (method === 'set') {
-        const on = args[0] === true || args[0] === 'on' || args[0] === 1 || args[0] === 'true';
-        if (on) {
-          await this.syncProc();
-          if (!this.proc.running) {
-            // 未检测到主进程：保持熄灭，并把原因交给调用方弹提示。
-            const state = this.priorityState();
-            return { ok: false, error: '未检测到Workbuddy', reason: 'no-process', ...state };
-          }
-        }
-        const state = await this.setPrefer(on);
-        return { ok: true, ...state };
-      }
-      if (method === 'process') {
-        await this.syncProc(true);
-        return { ok: true, ...this.priorityState() };
-      }
-      throw new Error(`unknown method: ${method}`);
-    }
     // 「用量」面板：本地账本聚合 + 积分包快照 + 促销清单。积分以 usage.credit 为准，不拿倍率倒推。
     if (panel === 'usage') {
       if (method === 'state') return await this.usageState();
@@ -1048,14 +992,12 @@ export class WorkBuddyWorld {
         tokenSource: this.tokens?.source ?? null,
         tokenMask: this.tokens?.accessToken ? maskToken(this.tokens.accessToken) : null,
         account: this.tokens?.account ?? null,
-        region: this.cfg.region,
         baseUrl: this.baseUrl(),
         model: this.cfg.model,
         catalogAt: this.catalogAt,
         lastError: this.lastError,
         safeOnly: this.cfg.safeOnly !== false,
         models: this.catalog.map((m) => this.describeModel(m)),
-        prefer: this.preferOn,
         running: !!this.proc.running,
         mainPid: this.proc.mainPid,
       };
@@ -1084,6 +1026,7 @@ export class WorkBuddyWorld {
       if (!token) return { ok: false, error: 'empty token' };
       this.ctx.storeSecret('accessToken', token);
       this.tokens = { accessToken: token, source: 'manual' };
+      this.lastError = '';
       return { ok: true, mask: maskToken(token) };
     }
     if (method === 'clearToken') {
@@ -1096,6 +1039,9 @@ export class WorkBuddyWorld {
         return { ok: false, error: `写入失败：${err?.message ?? err}` };
       }
       this.tokens = null;
+      // 立刻给出可操作提示：0.3.0 要等重启后 loadTokens 才设 lastError，
+      // 当下灯只显示「未发现登录态」，用户不知道该点「重新探测」。
+      this.lastError = '已登出：点「重新探测」或重新填 token 才能继续使用。';
       if (!stored) return { ok: false, error: '密钥库拒绝了写入，未能登出。' };
       return { ok: true, authed: false };
     }
@@ -1112,10 +1058,21 @@ export class WorkBuddyWorld {
       }
     }
     if (method === 'rediscover') {
+      // 只有「密钥库里还留着 wb-cleared 登出哨兵」时才需要把它换成 wb-auto。
+      // 用户手动粘贴过 token 时 loadTokens() 直接返回那份 manual token，
+      // 0.3.0 这时仍写 TOKEN_AUTO，把密钥库里的真 token 覆盖掉，重启后手动 token 丢失
+      // （审查报告第 3 条）。
+      let stored = null;
+      try {
+        stored = this.ctx.secret('accessToken');
+      } catch {
+        stored = null;
+      }
+      const wasCleared = stored === TOKEN_CLEARED;
       this.tokens = null;
       // 用户主动要求重新探测：这时才允许越过「已登出」哨兵去读数据目录。
       await this.loadTokens({ rediscover: true });
-      if (this.tokens?.accessToken) {
+      if (this.tokens?.accessToken && wasCleared) {
         // 探测成功就把哨兵从「已登出」换成「允许自动发现」：
         // 否则密钥库里留着 wb-cleared，扩展一重启又会变回未登录（审查报告第 2 条）。
         try {

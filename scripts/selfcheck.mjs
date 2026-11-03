@@ -27,7 +27,7 @@ const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
 /** 没有宿主时能做的检查：语法 + 契约测试。全通过才返回 true。 */
 function offlineChecks() {
   const files = [];
-  for (const dir of ['src', 'src/webui', 'scripts']) {
+  for (const dir of ['src', 'src/webui', 'scripts', 'scripts/lib']) {
     const abs = join(pkgDir, dir);
     if (!existsSync(abs)) continue;
     for (const name of readdirSync(abs)) {

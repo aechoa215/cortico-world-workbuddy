@@ -7,7 +7,7 @@ export const WORKBUDDY = {
   id: 'workbuddy',
   label: 'WorkBuddy 桥接',
   defaults: () => ({ ...WB_DEFAULTS }),
-  // ctx.cfg 是 worlds.workbuddy 的活引用：region / model / maxTokens 等热改即生效。
+  // ctx.cfg 是 worlds.workbuddy 的活引用：model / maxTokens 等热改即生效。
   create: (ctx) => new WorkBuddyWorld({ ctx }),
   // 自描述：可能出现的全部工具与会推出的全部事件，不进提示词。
   describe: {
@@ -21,8 +21,8 @@ export const WORKBUDDY = {
         en: 'Selects the default WorkBuddy model for wb_chat.',
       },
       wb_chat: {
-        zh: '用选中的 WorkBuddy 模型回答一个单轮问题（消耗本人账号积分）。',
-        en: 'Asks the selected WorkBuddy model a single-turn question (spends your own credits).',
+        zh: '用选中的 WorkBuddy 模型回答一个单轮问题（消耗本人账号积分；需桌面端主进程在运行）。',
+        en: 'Asks the selected WorkBuddy model a single-turn question (spends your own credits). Requires the WorkBuddy desktop app to be running.',
       },
       wb_credits: {
         zh: '只读查询当前账号的 WorkBuddy 积分余额。',
