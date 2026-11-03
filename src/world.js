@@ -327,6 +327,14 @@ export class WorkBuddyWorld {
     const tokens = await this.ensureTokens();
     if (!tokens) throw new WbUpstreamError('no-auth', { kind: 'session_dead' });
     const { models, promos, source } = await this.upstream().fetchCatalog(tokens);
+    // v3 接口偶发失败时 upstream 会退回 legacy（模型更少、没有促销）。本地已经有
+    // 一份完整的 v3 目录时，不拿这种降级结果覆盖它，否则倍率与限时折扣会一起丢失。
+    if (source === 'legacy' && this.catalogSource === 'v3-config' && this.catalog.length > 0) {
+      this.lastError = 'v3 目录暂时不可用，已保留上一次的完整目录（含促销与倍率）';
+      this.log.warn(`workbuddy: ${this.lastError}`);
+      this.broadcast({ kind: 'catalog', count: this.catalog.length });
+      return this.catalog;
+    }
     this.catalog = models;
     this.promos = promos;
     this.catalogSource = source;
@@ -750,23 +758,9 @@ export class WorkBuddyWorld {
               : '正在检测 WorkBuddy 主进程…',
         },
       ],
-      badges: [
-        {
-          label: zh ? '当前模型' : 'Model',
-          value: this.cfg.model || '—',
-          tone: this.cfg.model ? 'on' : 'off',
-        },
-        {
-          label: zh ? '倍率' : 'Multiplier',
-          value: this.selectedMultiplier() ?? '—',
-          tone: 'plain',
-        },
-        {
-          label: zh ? '今日积分' : 'Today',
-          value: `${Math.round(this.today.credit * 100) / 100}`,
-          tone: this.today.credit > 0 ? 'on' : 'plain',
-        },
-      ],
+      // 0.3.5：顶部徽标（当前模型/倍率/今日积分）只在页面挂载时算一次，之后不会更新，
+      // 会与面板内的实时状态打架，因此整段删除；这三处信息分别以
+      // 模型目录芯片、逐模型倍率列、用量与成本面板为准。
       config: [WB_CONFIG_GROUP],
       panels: [
         {

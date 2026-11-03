@@ -6,42 +6,43 @@
  * 状态不明（请求格式报错）、媒体/代码补全模型，一律不通过外部软件调用。
  *
  * 这里把结论固化成三件事：
- *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（WorkBuddy 给的 22 个）；
+ *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（0.3.5 起对齐 WorkBuddy
+ *      应用「选择模型」列表里的 17 个）；
  *   2. classifyModel()：给目录里每个模型打等级与理由，供面板展示与拦截；
  *   3. DEFAULT_SAFE_MODEL：当前选择失效时的回落项（同样是白名单内的 flash 档）。
+ *
+ * 0.3.5 按官方选择器重新校对过一遍：目录里仍有、但应用选择器不显示的 id
+ * （deepseek-v4-flash / deepseek-v3-2-volc / hy3-b / hy3-c / hy3-x / kimi-k2.5 /
+ * minimax-m2.7 / hunyuan-chat）不再放行；其中 hunyuan-chat 在 v3 目录里没有
+ * credits 字段，倍率无法核验。旧 id kimi-k3-1 在 v3 目录中已不存在，换成 kimi-k3-2。
  *
  * 清单会随官方目录变化而过时——这正是 classifyModel 返回 safe=false 时给出
  * 「不在安全清单内」的原因，而不是断言模型不可用。用户可以显式关掉 safeOnly
  * 自行承担风险，扩展不做单方面放行。
  */
 
-/** WorkBuddy 建议的公开对话模型白名单。 */
+/** WorkBuddy 选择器里的公开对话模型白名单。 */
 export const SAFE_MODEL_IDS = [
   // DeepSeek
   'deepseek-v4.1-flash',
-  'deepseek-v4-flash',
   'deepseek-v4-pro',
-  'deepseek-v3-2-volc',
   // GLM
-  'glm-5.3-flash',
   'glm-5.3',
+  'glm-5.3-flash',
+  'glm-5.3-flashx',
   'glm-5.2',
   // 混元
   'hy3',
-  'hy3-b',
-  'hy3-c',
-  'hy3-x',
-  'hunyuan-chat',
   // 混元 4 预览：0.1.7 探测时它正忙（超时被判成不可用），用户指出后复测通过，
   // 按用户要求纳入白名单；仍属 preview 档，放在 CAUTION 里提示「别高频自动化」。
   'hy4-preview',
   // Kimi
-  'kimi-k2.5',
   'kimi-k2.8-preview',
-  'kimi-k3-1',
+  'kimi-k3-2',
   'kimi-k3.1-pro',
+  'kimi-k3.1-pro-highspeed',
   // 其他
-  'minimax-m2.7',
+  'minimax-m3-pay',
   'minimax-m3.1-flash',
   'mimo-v2.6-pro',
   'space-bunny',
@@ -50,15 +51,15 @@ export const SAFE_MODEL_IDS = [
 
 /** 白名单分组（面板与 wb_list_models 用同一份顺序）。 */
 export const SAFE_MODEL_GROUPS = [
-  { label: 'DeepSeek', ids: ['deepseek-v4.1-flash', 'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v3-2-volc'] },
-  { label: 'GLM', ids: ['glm-5.3-flash', 'glm-5.3', 'glm-5.2'] },
-  { label: '混元', ids: ['hy3', 'hy3-b', 'hy3-c', 'hy3-x', 'hunyuan-chat', 'hy4-preview'] },
-  { label: 'Kimi', ids: ['kimi-k2.5', 'kimi-k2.8-preview', 'kimi-k3-1', 'kimi-k3.1-pro'] },
-  { label: '其他', ids: ['minimax-m2.7', 'minimax-m3.1-flash', 'mimo-v2.6-pro', 'space-bunny', 'step-5-preview'] },
+  { label: 'DeepSeek', ids: ['deepseek-v4.1-flash', 'deepseek-v4-pro'] },
+  { label: 'GLM', ids: ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5.2'] },
+  { label: '混元', ids: ['hy3', 'hy4-preview'] },
+  { label: 'Kimi', ids: ['kimi-k2.8-preview', 'kimi-k3-2', 'kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'] },
+  { label: '其他', ids: ['minimax-m3-pay', 'minimax-m3.1-flash', 'mimo-v2.6-pro', 'space-bunny', 'step-5-preview'] },
 ];
 
 /** 白名单里属于「免费试用/预览」的模型：能用，但不适合高频自动化调用。 */
-export const CAUTION_MODEL_IDS = ['hy3', 'hy3-b', 'hy3-c', 'kimi-k2.8-preview', 'step-5-preview', 'hy4-preview'];
+export const CAUTION_MODEL_IDS = ['hy3', 'kimi-k2.8-preview', 'step-5-preview', 'hy4-preview'];
 
 /** 当前选择失效时的回落模型。 */
 export const DEFAULT_SAFE_MODEL = 'deepseek-v4.1-flash';
@@ -158,7 +159,7 @@ export function classifyModel(id, model) {
 
 /** 白名单模型的建议默认次序：优先 flash 档，避开试用/预览。 */
 export function preferredSafeModel(availableIds = SAFE_MODEL_IDS) {
-  const order = [DEFAULT_SAFE_MODEL, 'deepseek-v4-flash', 'glm-5.3-flash', 'minimax-m3.1-flash'];
+  const order = [DEFAULT_SAFE_MODEL, 'glm-5.3-flash', 'minimax-m3.1-flash'];
   for (const id of order) if (availableIds.includes(id)) return id;
   const firstStable = availableIds.find((id) => inList(id, SAFE_MODEL_IDS) && !inList(id, CAUTION_MODEL_IDS));
   return firstStable ?? DEFAULT_SAFE_MODEL;

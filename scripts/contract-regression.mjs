@@ -141,8 +141,7 @@ export async function runRegression(ok, { pkgDir } = {}) {
   const rolledVars = rollW.world.envPromptVars();
   ok(rolledVars['workbuddy.todayCredit'] === '0', '跨日后提示词里的今日积分归零', rolledVars['workbuddy.todayCredit']);
   ok(rollW.world.today.day !== '2020-01-01', '跨日后 today.day 翻到当天', rollW.world.today.day);
-  const rolledUi = rollW.world.webUi('zh');
-  ok(rolledUi.badges.find((b) => b.label === '今日积分')?.value === '0', '跨日后详情页徽标归零');
+  // 0.3.5 起没有顶部徽标，「今日积分」以用量面板为准，跨日归零由上面的提示词变量断言覆盖。
   // 断言必须跟宿主机时区走：原先硬编码 +08 的 00:30，在 UTC 的 CI 上会算成前一日而红叉。
   // 用本地 getter 拼出期望值，仍能抓住「改用 toISOString 的 UTC 日期」这类回归。
   const midnight = new Date(2026, 10, 3, 0, 30, 0);

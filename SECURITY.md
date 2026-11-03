@@ -4,6 +4,23 @@ This extension talks to *your own* WorkBuddy account on *your own* machine. It h
 no telemetry and no third-party analytics. This file states exactly what it touches, so you can
 judge the risk before installing.
 
+## Scope of use
+
+This extension exists for one purpose: letting the Coo desktop pet answer **text conversations**
+with you by calling a model from **your own, locally signed-in WorkBuddy account**, one call at a
+time, only when a turn actually needs it.
+
+It is **not** an API gateway, an OpenAI-compatible server, a batch/automation/crawling tool, a
+multi-account pool, a credential-sharing service, or a way to bypass WorkBuddy billing. It opens no
+listening port, exposes no HTTP endpoint, runs no background chat job, and sends only what your own
+WorkBuddy client would send. Every `wb_chat` call is user-driven and consumes your own credits at
+the upstream rate.
+
+Do not redistribute, resell, or repurpose this extension as a model service for third parties.
+That is outside its design and outside WorkBuddy's terms of service — see the Acceptable Use Policy
+(§4 Restricted Use) and the Terms of Service (§3.5 Monitoring and Circumvention, §12) under
+<https://www.workbuddy.cn/document/>.
+
 ## What it reads
 
 | Path | Why | Data |

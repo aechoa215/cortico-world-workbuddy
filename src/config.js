@@ -77,7 +77,7 @@ export const WB_CONFIG_GROUP = {
         type: 'boolean',
         title: '只调用安全清单模型',
         description:
-          '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 公开目录里的对话模型（22 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉可绕过限制，但那属于违反对方使用建议的操作，风险自负。',
+          '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 官方模型列表里的对话模型（17 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉会放行这些项，但那既超出本扩展的用途范围，也容易触发上游限制，风险自负。',
         'x-hot': true,
       },
     },

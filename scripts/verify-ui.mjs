@@ -317,7 +317,7 @@ for (let run = 1; run <= RUNS; run += 1) {
         const rows = document.querySelectorAll('table tr').length;
         return { hasRefresh: !!btn, chip: (chip?.textContent || '').trim(), rows };
       })()`);
-      return v.hasRefresh && v.rows >= 4 ? v : false;
+      return v.hasRefresh && v.rows >= 4 && /\d/.test(v.chip) ? v : false;
     });
     row.checks.usageRendered = usage.hasRefresh === true;
     row.checks.usageRows = usage.rows;

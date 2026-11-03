@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   一键重装 cortico-world-workbuddy：打包（npm pack）→ 卸载旧版 → 安装 → 校验哈希与版本。
@@ -145,7 +145,8 @@ if ($packedPkg.version -ne $version) { Fail "tgz 里的版本是 $($packedPkg.ve
 Push-Location $extDir
 try {
   Step "卸载 $name（同版本重装必须先 remove，否则 pnpm 会复用旧包）"
-  node $pnpmCjs remove $name 2>&1 | Out-Null
+  node $pnpmCjs remove $name --store-dir $storeDir 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail 'pnpm remove 失败（多半是全局 store 与宿主 store 不一致）' }
   Step '安装新包'
   $out = node $pnpmCjs add $tgz --config.strict-dep-builds=false --store-dir $storeDir 2>&1 | Out-String
   if ($LASTEXITCODE -ne 0) { Write-Host $out; Fail 'pnpm add 失败' }

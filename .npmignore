@@ -6,3 +6,6 @@ scripts/visual/
 .env
 *.local
 workbuddy-catalog.json
+
+# 测试报告只作归档，不进安装包
+TEST-REPORT.md

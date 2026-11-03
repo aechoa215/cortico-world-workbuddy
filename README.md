@@ -3,8 +3,8 @@
 把 **本机已登录的 WorkBuddy 客户端**的模型桥接进
 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion) 桌宠：Coo 可以直接调用你
 WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看每个模型的
-**默认积分倍率**（如 `x0.79`）并点选要用的模型；World 详情页有一个「是否启用Workbuddy」
-开关，打开后桌宠每轮对话都先问 WorkBuddy。
+**默认积分倍率**（如 `x0.79`）并点选要用的默认模型；`wb_*` 工具按需调用，
+不开启任何「每轮强制走 WorkBuddy」的行为。
 
 这是一个 Cortico 的 World 扩展（`kind: world`，`api: 6`），纯 ESM JS、零运行时依赖，
 面板产物已随包构建好（`dist/webui.js`）。
@@ -14,7 +14,26 @@ WorkBuddy 账号里的模型，World 面板里可以浏览模型目录、查看�
 > 按上游给出的倍率真实扣费；扩展不提供账号、不共享凭据、不绕过计费。
 > 请自行评估账号风险，官方 WorkBuddy 客户端始终是最安全的选择。
 
-## 安装（0.3.4，Coopanion 0.2.17 实机验证）
+## 用途与边界
+
+本扩展只做一件事：在你与桌宠 Coo 进行**文字对话**时，让 Coo 按需调用你**本机已登录的
+WorkBuddy 账号**里的对话模型，并把回答转述给你。
+
+它不是、也不应被当作：
+
+- **通用 API 网关 / OpenAI 兼容服务**：扩展不监听端口、不对外提供 HTTP 接口，
+  除宿主内的 Coo 外没有任何调用方；
+- **批量、自动化或爬取工具**：没有批量接口、没有循环调用、没有后台任务，
+  每一次调用都由 Coo 在一次对话中显式发起；
+- **多账号池、凭据共享或转售服务**：只读取本机当前登录态，不收集、不上传、不共享凭据；
+- **绕过计费的手段**：每次 `wb_chat` 都按上游倍率真实扣你自己的积分，
+  扩展不伪造计费、不改写用量、不模拟官方客户端以外的身份。
+
+请勿把本扩展或其组件用于上述任何用途，也不要把它改造成对第三方开放的模型服务。
+把它接进「每回合强制调用」「多账号轮询」「给别的应用当 API」这类场景，既超出本扩展的设计，
+也超出 WorkBuddy 服务条款允许的使用范围，风险与后果由使用者自行承担。
+
+## 安装（0.3.5，Coopanion 0.2.17 实机验证）
 
 一条命令（推荐，脚本会做完打包、装卸、哈希与版本校验）：
 
@@ -32,7 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
    cd "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\extensions"
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" remove cortico-world-workbuddy
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" `
-     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.4.tgz" `
+     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.5.tgz" `
      --config.strict-dep-builds=false `
      --store-dir "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\pnpm\store\v11"
    ```
@@ -141,12 +160,16 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 `disabled`、内部路由别名、媒体/代码补全与状态不明的模型都不要经外部软件调用，否则有风控/封号风险。
 这里把它落成代码：
 
-- 白名单 22 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
-  `deepseek-v4.1-flash`、`deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v3-2-volc`、
-  `glm-5.3-flash`、`glm-5.3`、`glm-5.2`、`hy3`、`hy3-b`、`hy3-c`、`hy3-x`、`hunyuan-chat`、
-  `hy4-preview`、`kimi-k2.5`、`kimi-k2.8-preview`、`kimi-k3-1`、`kimi-k3.1-pro`、`minimax-m2.7`、
-  `minimax-m3.1-flash`、`mimo-v2.6-pro`、`space-bunny`、`step-5-preview`。
-  其中 `hy3*` 与 `*preview`（含 `hy4-preview`）标为「谨慎」（免费试用/预览，别做高频自动化）。
+- 白名单 17 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，0.3.5 起与 WorkBuddy「选择模型」列表逐项对齐，
+  按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
+  `deepseek-v4.1-flash`、`deepseek-v4-pro`、`glm-5.3`、`glm-5.3-flash`、`glm-5.3-flashx`、`glm-5.2`、
+  `hy3`、`hy4-preview`、`kimi-k2.8-preview`、`kimi-k3-2`、`kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed`、
+  `minimax-m3-pay`、`minimax-m3.1-flash`、`mimo-v2.6-pro`、`space-bunny`、`step-5-preview`。
+  其中 `hy3`、`kimi-k2.8-preview`、`step-5-preview`、`hy4-preview` 标为「谨慎」（免费试用/预览，别做高频自动化）。
+- 旧 id `kimi-k3-1` 在 v3 目录里已不存在（Kimi-K3 现在只对应 `kimi-k3-2`），0.3.5 一并换掉；
+  同时移除了应用选择器不显示、但目录里仍可调用的 8 个 id（`deepseek-v4-flash`、`deepseek-v3-2-volc`、
+  `hy3-b`、`hy3-c`、`hy3-x`、`kimi-k2.5`、`minimax-m2.7`、`hunyuan-chat`）——其中 `hunyuan-chat`
+  在 v3 目录里没有 `credits` 字段，倍率无法核验。
 - 其余全部**拒绝**：`wb-lite`（目录 `disabled:true`）、`auto` / `fast-model` / `balanced-model` /
   `deep-model`（内部路由别名）、4 个媒体模型、`codewise-*`、其他 `hy4-preview*` 变体（只精确放行
   `hy4-preview`）、19 个已下架的、
@@ -227,7 +250,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 并把「路由挂载」与「面板渲染」拆成两条断言——否则一次产物没加载就会被误判成「按钮没了」。
 
 版本号规范：任何改动都 bump `package.json` 的 `version`，备份目录按版本命名
-（`F:\coo-connect-wb\0.3.4\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
+（`F:\coo-connect-wb\0.3.5\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
 不一致直接非零退出。
 
 打包注意：**不要用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 `package.json`**
@@ -235,7 +258,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 用 node 读写 JSON；tgz 必须以 `package/` 为前缀：
 
 ```bash
-tar -czf cortico-world-workbuddy-0.3.4.tgz -C <stage> package
+tar -czf cortico-world-workbuddy-0.3.5.tgz -C <stage> package
 ```
 
 协议细节参照 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)
@@ -286,7 +309,7 @@ node scripts/selfcheck.mjs       # dry-mount 框架契约
 node scripts/verify-ui.mjs --runs 3
 
 # 2. 提交并打 tag
-git tag v0.3.4 && git push --tags
+git tag v0.3.5 && git push --tags
 
 # 3. 发布（prepack 会自动重建 dist/webui.js）
 npm publish --access public
@@ -311,5 +334,17 @@ node scripts/selfcheck.mjs --allow-missing-host   # 找不到宿主 → 警告 +
 ## 免责
 
 本扩展与腾讯 / WorkBuddy 官方无关，也不代表 Pal AI Lab / Cortico / Coopanion 官方立场。
-使用即表示你理解：所有调用消耗自己账号的积分，账号状态由上游管理，
-扩展作者不对账号限制或扣费负责。凭据处理细节见 [SECURITY.md](./SECURITY.md)。
+它使用的不是 WorkBuddy 官方开放 API，而是本机客户端自身的接口；上游一旦调整或收紧，
+扩展可能失效，也可能带来账号层面的风险。
+
+使用即表示你理解并接受：
+
+1. **仅限个人、本地、桌宠文字对话中的按需调用**——这是本扩展唯一的设计用途；
+2. 所有调用消耗**你自己账号**的积分，倍率与扣费以上游为准，扩展只做记录与展示；
+3. 账号状态、积分变动、风控与封禁由上游裁量，本扩展作者不承担任何责任；
+4. 把本扩展用于对外提供接口、批量调用、多账号共享、绕过计费或其它未声明用途，
+   属于超出设计范围的使用，后果由使用者自行承担。
+
+凭据读取范围、网络出口与本扩展写盘内容见 [SECURITY.md](./SECURITY.md)。
+官方 [服务条款](https://www.workbuddy.cn/document/term) 与
+[可接受使用政策](https://www.workbuddy.cn/document/acceptable-use-policy) 始终优先于本扩展的任何行为。

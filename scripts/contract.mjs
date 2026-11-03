@@ -310,7 +310,22 @@ const ui = uiWorld.webUi('zh');
 ok(ui.panels.map((p) => p.id).join(',') === 'models,account,usage', '0.3.4 面板只剩 models/account/usage', ui.panels.map((p) => p.id));
 ok(Array.isArray(ui.lamps) && ui.lamps.length === 2, '灯态只保留 WorkBuddy + 主进程两盏', ui.lamps?.length);
 ok(!('storage' in ui), '不再声明 storage（否则宿主会生成空的「数据清理」页签）');
+// 0.3.5：顶部徽标只在挂载时渲染一次，会与面板实时状态不一致，整段删除。
+ok(!('badges' in ui), '不再有顶部徽标（当前模型/倍率/今日积分以面板为准）', Object.keys(ui));
 ok(!('prefer' in uiWorld.cfg), '配置里不再有 prefer 开关字段', Object.keys(uiWorld.cfg));
+
+// 0.3.5：v3 接口失败退回 legacy 时，不拿降级目录覆盖已有的 v3 目录（否则促销与倍率全丢）
+const guardWorld = makeWorld(TOKEN_AUTO);
+guardWorld.host = { log: { warn: () => {}, info: () => {}, error: () => {} } };
+guardWorld.tokens = { accessToken: 'test-only', source: 'test' };
+guardWorld.catalog = [{ id: 'glm-5.3', creditMultiplier: 0.69 }];
+guardWorld.promos = [{ id: 'night', modelIds: ['glm-5.3'], discount: { multiplier: 0.5 } }];
+guardWorld.catalogSource = 'v3-config';
+guardWorld.upstream = () => ({ fetchCatalog: async () => ({ models: [{ id: 'legacy-only' }], promos: [], source: 'legacy' }) });
+const guarded = await guardWorld.refreshCatalog();
+ok(guarded.length === 1 && guarded[0].id === 'glm-5.3', 'legacy 刷新结果不覆盖已有的 v3 目录', guarded.map((m) => m.id));
+ok(guardWorld.promos.length === 1 && guardWorld.catalogSource === 'v3-config', '保留 v3 来源与促销', guardWorld.catalogSource);
+ok(/v3|legacy/.test(String(guardWorld.lastError ?? '')), '保留旧目录时给出提示', guardWorld.lastError);
 
 // 账本并发：append 与 prune 串行，不互相覆盖
 const ledger = new UsageLedger({ dataDir: mkdtempSync(join(tmpdir(), 'wb-ledger-')), log: { warn: () => {} } });
