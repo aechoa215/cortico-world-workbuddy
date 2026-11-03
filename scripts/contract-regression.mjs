@@ -143,10 +143,16 @@ export async function runRegression(ok, { pkgDir } = {}) {
   ok(rollW.world.today.day !== '2020-01-01', '跨日后 today.day 翻到当天', rollW.world.today.day);
   const rolledUi = rollW.world.webUi('zh');
   ok(rolledUi.badges.find((b) => b.label === '今日积分')?.value === '0', '跨日后详情页徽标归零');
+  // 断言必须跟宿主机时区走：原先硬编码 +08 的 00:30，在 UTC 的 CI 上会算成前一日而红叉。
+  // 用本地 getter 拼出期望值，仍能抓住「改用 toISOString 的 UTC 日期」这类回归。
+  const midnight = new Date(2026, 10, 3, 0, 30, 0);
+  const localLabel = `${midnight.getFullYear()}-${String(midnight.getMonth() + 1).padStart(2, '0')}-${String(
+    midnight.getDate(),
+  ).padStart(2, '0')}`;
   ok(
-    rollW.world.localDay(Date.parse('2026-11-03T00:30:00+08:00')) === '2026-11-03',
-    'localDay 用本地日期（UTC+8 的 00:30 仍是当天）',
-    rollW.world.localDay(Date.parse('2026-11-03T00:30:00+08:00')),
+    rollW.world.localDay(midnight.getTime()) === localLabel,
+    'localDay 按宿主机本地日历取日（不是 toISOString 的 UTC 日期）',
+    rollW.world.localDay(midnight.getTime()),
   );
 
   /* ---- 5. 自动解封覆盖两种安装形态 -------------------------------------- */
