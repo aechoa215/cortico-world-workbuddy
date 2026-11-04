@@ -6,8 +6,8 @@
  * 状态不明（请求格式报错）、媒体/代码补全模型，一律不通过外部软件调用。
  *
  * 这里把结论固化成三件事：
- *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（0.3.5 起对齐 WorkBuddy
- *      应用「选择模型」列表里的 17 个）；
+ *   1. SAFE_MODEL_IDS：可直接用 wb_chat 调用的白名单（0.3.6 起 18 个：0.3.5 的 17 个
+ *      去掉已下架的 hy4-preview，补上 HY4 的新 id hy4free / hy4std）；
  *   2. classifyModel()：给目录里每个模型打等级与理由，供面板展示与拦截；
  *   3. DEFAULT_SAFE_MODEL：当前选择失效时的回落项（同样是白名单内的 flash 档）。
  *
@@ -15,6 +15,11 @@
  * （deepseek-v4-flash / deepseek-v3-2-volc / hy3-b / hy3-c / hy3-x / kimi-k2.5 /
  * minimax-m2.7 / hunyuan-chat）不再放行；其中 hunyuan-chat 在 v3 目录里没有
  * credits 字段，倍率无法核验。旧 id kimi-k3-1 在 v3 目录中已不存在，换成 kimi-k3-2。
+ *
+ * 0.3.6 跟进上游 HY4 改版（2026-11-04 拉取目录核对）：显示名同为「Hy4」的 id 变成两个——
+ * hy4free（带「限时免费」促销，比照 hy3 记为谨慎档）与 hy4std（x0.29 常规定价、非 preview，
+ * 按公开对话模型放行）；原 hy4-preview 已从目录消失，从白名单摘掉并并入 DELISTED_IDS 置灰。
+ * 同前缀的 hy4-preview-ctrl / hy4-preview-exp / hy4preview-exp1 / hy4preview-exp2 仍按实验预览拦下。
  *
  * 清单会随官方目录变化而过时——这正是 classifyModel 返回 safe=false 时给出
  * 「不在安全清单内」的原因，而不是断言模型不可用。用户可以显式关掉 safeOnly
@@ -33,9 +38,10 @@ export const SAFE_MODEL_IDS = [
   'glm-5.2',
   // 混元
   'hy3',
-  // 混元 4 预览：0.1.7 探测时它正忙（超时被判成不可用），用户指出后复测通过，
-  // 按用户要求纳入白名单；仍属 preview 档，放在 CAUTION 里提示「别高频自动化」。
-  'hy4-preview',
+  // HY4：2026-11-04 目录改版后 hy4-preview 已消失，拆成两个 id，显示名都叫「Hy4」。
+  // hy4free 带「限时免费」促销（比照 hy3 进 CAUTION）；hy4std 是 x0.29 常规定价、非 preview。
+  'hy4free',
+  'hy4std',
   // Kimi
   'kimi-k2.8-preview',
   'kimi-k3-2',
@@ -53,13 +59,13 @@ export const SAFE_MODEL_IDS = [
 export const SAFE_MODEL_GROUPS = [
   { label: 'DeepSeek', ids: ['deepseek-v4.1-flash', 'deepseek-v4-pro'] },
   { label: 'GLM', ids: ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5.2'] },
-  { label: '混元', ids: ['hy3', 'hy4-preview'] },
+  { label: '混元', ids: ['hy3', 'hy4free', 'hy4std'] },
   { label: 'Kimi', ids: ['kimi-k2.8-preview', 'kimi-k3-2', 'kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'] },
   { label: '其他', ids: ['minimax-m3-pay', 'minimax-m3.1-flash', 'mimo-v2.6-pro', 'space-bunny', 'step-5-preview'] },
 ];
 
 /** 白名单里属于「免费试用/预览」的模型：能用，但不适合高频自动化调用。 */
-export const CAUTION_MODEL_IDS = ['hy3', 'kimi-k2.8-preview', 'step-5-preview', 'hy4-preview'];
+export const CAUTION_MODEL_IDS = ['hy3', 'kimi-k2.8-preview', 'step-5-preview', 'hy4free'];
 
 /** 当前选择失效时的回落模型。 */
 export const DEFAULT_SAFE_MODEL = 'deepseek-v4.1-flash';
@@ -96,12 +102,19 @@ const RETIRED_IDS = [
   'deepseek-v3-0324-taco-completion',
 ];
 
+/**
+ * 已从官方目录消失、但没有实测过 11102 的模型：展示时与「已下架」同样置灰，同样不放行。
+ * 0.3.6：hy4-preview 被 HY4 的新 id（hy4free / hy4std）取代后不再出现在目录里。
+ */
+const DELISTED_IDS = ['hy4-preview'];
+
 /** 请求格式不符（11150）的模型，状态不明。 */
 const FORMAT_UNSUPPORTED_IDS = ['glm-5.0-turbo'];
 
 /** 实验预览系列（能对话，但未列入安全清单）。 */
-// 只精确放行 hy4-preview 本身（在 SAFE_MODEL_IDS 里）；同前缀的新实验号（如 hy4-preview-v2）
-// 仍然会被判成「实验预览·未列入安全清单」，需要人工复核后再加白名单。
+// 0.3.6 起这里不再放行任何 id：hy4-preview 本身已下架（见 DELISTED_IDS），同前缀的
+// hy4-preview-ctrl / -exp / hy4preview-exp1 / -exp2 等实验号一律判成「实验预览·未列入安全清单」，
+// 需要人工复核后才会加进白名单。
 const EXPERIMENTAL_PREFIXES = ['hy4-preview', 'hy4preview-'];
 
 const TIER_LABEL = {
@@ -152,6 +165,7 @@ export function classifyModel(id, model) {
   if (inList(mid, MEDIA_IDS)) return make('media', '图像/视频生成模型，不在对话接口范围内');
   if (inList(mid, CODE_IDS)) return make('code', '代码补全模型，对话接口不会给出正文');
   if (inList(mid, RETIRED_IDS)) return make('retired', '已下架（11102 service info not found）');
+  if (inList(mid, DELISTED_IDS)) return make('retired', '已从官方目录移除（0.3.6 核对），不再放行');
   if (inList(mid, FORMAT_UNSUPPORTED_IDS)) return make('format', '请求格式不符（11150），状态不明');
   if (startsWithAny(mid, EXPERIMENTAL_PREFIXES)) return make('experimental', '实验预览模型，未列入安全清单');
   return make('unknown', 'WorkBuddy 未把它列为公开对话模型');

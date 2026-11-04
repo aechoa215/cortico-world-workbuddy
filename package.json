@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-workbuddy",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "type": "module",
   "description": "仅用于桌宠 Coo 的文字对话：按需调用本机已登录的 WorkBuddy 模型，读取本机登录态，列出模型目录与默认积分倍率；不提供 API、不代理其它应用。",
   "license": "MIT",

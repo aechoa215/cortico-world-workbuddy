@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { buildDescribe, renderDescribe } from './gen-describe.mjs';
 import { WB_DEFAULTS } from '../src/config.js';
 import { attachPromos, parsePromos, priceViewOf } from '../src/promo.js';
-import { classifyModel, CAUTION_MODEL_IDS, SAFE_MODEL_IDS } from '../src/safety.js';
+import { classifyModel, CAUTION_MODEL_IDS, SAFE_MODEL_GROUPS, SAFE_MODEL_IDS } from '../src/safety.js';
 import { UsageLedger, dayKey, summarize } from '../src/usage.js';
 import { classifyHttpFailure, WbUpstream } from '../src/upstream.js';
 import { PANEL_METHODS, TOKEN_AUTO, TOKEN_CLEARED, WorkBuddyWorld } from '../src/world.js';
@@ -197,11 +197,31 @@ ok(priceViewOf(dateOnlyModel, Date.parse('2026-11-03T09:00:00+08:00')).absoluteT
 /* ------------------------------------------------------------------- 安全 */
 
 console.log('· 安全清单');
-ok(SAFE_MODEL_IDS.includes('hy4-preview'), 'hy4-preview 在安全清单里');
-ok(CAUTION_MODEL_IDS.includes('hy4-preview'), 'hy4-preview 标为谨慎档');
+ok(SAFE_MODEL_IDS.includes('hy4free'), 'hy4free 在安全清单里');
+ok(SAFE_MODEL_IDS.includes('hy4std'), 'hy4std 在安全清单里');
+ok(!SAFE_MODEL_IDS.includes('hy4-preview'), '已下架的 hy4-preview 不在安全清单里');
 
-const hy4 = classifyModel('hy4-preview', { id: 'hy4-preview' });
-ok(hy4.allow === true && hy4.caution === true, 'hy4-preview 可调用但带谨慎提示', hy4);
+ok(CAUTION_MODEL_IDS.includes('hy4free'), 'hy4free 标为谨慎档（限时免费试用）');
+ok(!CAUTION_MODEL_IDS.includes('hy4std'), 'hy4std 是常规定价，不按谨慎档处理');
+
+const hy4free = classifyModel('hy4free', { id: 'hy4free' });
+ok(hy4free.allow === true && hy4free.caution === true, 'hy4free 可调用但带谨慎提示', hy4free);
+
+const hy4std = classifyModel('hy4std', { id: 'hy4std' });
+ok(hy4std.allow === true && hy4std.caution === false, 'hy4std 可调用且不带谨慎提示', hy4std);
+
+const hy4Old = classifyModel('hy4-preview', { id: 'hy4-preview' });
+ok(hy4Old.tier === 'retired' && hy4Old.allow === false, 'hy4-preview 已从目录移除、不再放行', hy4Old);
+
+const hy4Ctrl = classifyModel('hy4-preview-ctrl', { id: 'hy4-preview-ctrl' });
+ok(hy4Ctrl.tier === 'experimental' && hy4Ctrl.allow === false, '同前缀实验号仍是实验预览、不放行', hy4Ctrl.tier);
+
+const hy4Group = SAFE_MODEL_GROUPS.find((g) => g.label === '混元');
+ok(
+  Boolean(hy4Group) && hy4Group.ids.includes('hy4free') && hy4Group.ids.includes('hy4std'),
+  '混元分组同时列出 hy4free / hy4std',
+  hy4Group?.ids,
+);
 
 const lite = classifyModel('wb-lite', { id: 'wb-lite', disabled: true });
 ok(lite.tier === 'disabled' && lite.allow === false, '目录标 disabled 的模型被拒绝', lite.tier);

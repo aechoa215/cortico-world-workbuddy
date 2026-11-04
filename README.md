@@ -33,7 +33,7 @@ WorkBuddy 账号**里的对话模型，并把回答转述给你。
 把它接进「每回合强制调用」「多账号轮询」「给别的应用当 API」这类场景，既超出本扩展的设计，
 也超出 WorkBuddy 服务条款允许的使用范围，风险与后果由使用者自行承担。
 
-## 安装（0.3.5，Coopanion 0.2.17 实机验证）
+## 安装（0.3.6，Coopanion 0.2.17）
 
 一条命令（推荐，脚本会做完打包、装卸、哈希与版本校验）：
 
@@ -51,7 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reinstall.ps1
    cd "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\extensions"
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" remove cortico-world-workbuddy
    node "C:\Users\<你>\AppData\Local\Programs\Coopanion\resources\app\node_modules\pnpm\bin\pnpm.cjs" `
-     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.5.tgz" `
+     add "$env:LOCALAPPDATA\cortico-world-workbuddy\build\cortico-world-workbuddy-0.3.6.tgz" `
      --config.strict-dep-builds=false `
      --store-dir "C:\Users\<你>\AppData\Local\Programs\Coopanion\data\pnpm\store\v11"
    ```
@@ -160,19 +160,22 @@ WorkBuddy 官方对话给出的口径是：只调用「官方公开目录里、�
 `disabled`、内部路由别名、媒体/代码补全与状态不明的模型都不要经外部软件调用，否则有风控/封号风险。
 这里把它落成代码：
 
-- 白名单 17 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，0.3.5 起与 WorkBuddy「选择模型」列表逐项对齐，
-  按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
+- 白名单 18 个（`src/safety.js` 的 `SAFE_MODEL_IDS`，0.3.6 起；按 DeepSeek / GLM / 混元 / Kimi / 其他分组）：
   `deepseek-v4.1-flash`、`deepseek-v4-pro`、`glm-5.3`、`glm-5.3-flash`、`glm-5.3-flashx`、`glm-5.2`、
-  `hy3`、`hy4-preview`、`kimi-k2.8-preview`、`kimi-k3-2`、`kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed`、
+  `hy3`、`hy4free`、`hy4std`、`kimi-k2.8-preview`、`kimi-k3-2`、`kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed`、
   `minimax-m3-pay`、`minimax-m3.1-flash`、`mimo-v2.6-pro`、`space-bunny`、`step-5-preview`。
-  其中 `hy3`、`kimi-k2.8-preview`、`step-5-preview`、`hy4-preview` 标为「谨慎」（免费试用/预览，别做高频自动化）。
-- 旧 id `kimi-k3-1` 在 v3 目录里已不存在（Kimi-K3 现在只对应 `kimi-k3-2`），0.3.5 一并换掉；
+  其中 `hy3`、`kimi-k2.8-preview`、`step-5-preview`、`hy4free` 标为「谨慎」（免费试用/预览，别做高频自动化）。
+- 0.3.6 跟进 HY4 改版：官方目录里 `hy4-preview` 已经消失，显示名同为「Hy4」的 id 变成两个——
+  `hy4free`（带 11/4–11/15「限时免费」促销，比照 `hy3` 记为谨慎档）与 `hy4std`（x0.29 常规定价、
+  非 preview，按公开对话模型放行）；`hy4-preview` 从白名单摘掉，并入 `DELISTED_IDS` 置灰、不再放行。
+- 历史：旧 id `kimi-k3-1` 在 v3 目录里已不存在（Kimi-K3 现在只对应 `kimi-k3-2`），0.3.5 一并换掉；
   同时移除了应用选择器不显示、但目录里仍可调用的 8 个 id（`deepseek-v4-flash`、`deepseek-v3-2-volc`、
   `hy3-b`、`hy3-c`、`hy3-x`、`kimi-k2.5`、`minimax-m2.7`、`hunyuan-chat`）——其中 `hunyuan-chat`
   在 v3 目录里没有 `credits` 字段，倍率无法核验。
 - 其余全部**拒绝**：`wb-lite`（目录 `disabled:true`）、`auto` / `fast-model` / `balanced-model` /
-  `deep-model`（内部路由别名）、4 个媒体模型、`codewise-*`、其他 `hy4-preview*` 变体（只精确放行
-  `hy4-preview`）、19 个已下架的、
+  `deep-model`（内部路由别名）、4 个媒体模型、`codewise-*`、同前缀实验号
+  （`hy4-preview-ctrl`、`hy4-preview-exp`、`hy4preview-exp1`、`hy4preview-exp2`，前缀规则仍照拦）、
+  20 个已下架或已移出目录的（含 `hy4-preview-x` 与已移出目录的 `hy4-preview`）、
   `glm-5.0-turbo`（11150 请求格式不符）。
 - 闸门是 `worlds.workbuddy.safeOnly`（默认 `true`）。开着时 `wb_chat` / `wb_select_model` / 面板「选用」
   三处一致拒绝，并说明「判定档位 + 理由 + 怎么解除」；关掉才放行，属于明示的风险自负。
@@ -250,7 +253,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 并把「路由挂载」与「面板渲染」拆成两条断言——否则一次产物没加载就会被误判成「按钮没了」。
 
 版本号规范：任何改动都 bump `package.json` 的 `version`，备份目录按版本命名
-（`F:\coo-connect-wb\0.3.5\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
+（`F:\coo-connect-wb\0.3.6\`），再用 `scripts/reinstall.ps1` 装；它先把 tgz 解出来，再拿**解出来的内容**与安装目录逐文件比对哈希，
 不一致直接非零退出。
 
 打包注意：**不要用 PowerShell 的 `Get-Content -Raw | Set-Content` 改 `package.json`**
@@ -258,7 +261,7 @@ UI 验证脚本的两个约定（踩过坑，别再用固定 sleep）：每轮�
 用 node 读写 JSON；tgz 必须以 `package/` 为前缀：
 
 ```bash
-tar -czf cortico-world-workbuddy-0.3.5.tgz -C <stage> package
+tar -czf cortico-world-workbuddy-0.3.6.tgz -C <stage> package
 ```
 
 协议细节参照 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)
@@ -309,7 +312,7 @@ node scripts/selfcheck.mjs       # dry-mount 框架契约
 node scripts/verify-ui.mjs --runs 3
 
 # 2. 提交并打 tag
-git tag v0.3.5 && git push --tags
+git tag v0.3.6 && git push --tags
 
 # 3. 发布（prepack 会自动重建 dist/webui.js）
 npm publish --access public

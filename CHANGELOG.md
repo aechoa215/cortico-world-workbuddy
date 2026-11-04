@@ -1,5 +1,30 @@
 # 更新日志
 
+## 0.3.6
+
+跟进 WorkBuddy 上游的 HY4 改版：官方目录里 `hy4-preview` 已消失，换成了两个显示名都叫「Hy4」的新 id，
+本版把安全清单与这两项对齐（**仅本地，未推送、未发布；安装到 Coopanion 待确认**）。
+
+### 安全清单与目录
+
+- **白名单 17 → 18**：新增 `hy4free`、`hy4std`（混元分组）；从白名单摘掉已下架的 `hy4-preview`，
+  并入新增的 `DELISTED_IDS`（展示时与「已下架」同档置灰，不再放行）。
+- **谨慎档按现有口径判定**：`hy4free` 带 11/4–11/15 的「限时免费」促销，属免费试用档 → 进
+  `CAUTION_MODEL_IDS`；`hy4std` 是 x0.29 常规定价、没有促销、也不是 preview → 按普通公开模型放行。
+  `hy4-preview` 同时从谨慎档移除。
+- 实验号不受影响：`hy4-preview-ctrl` / `hy4-preview-exp` / `hy4preview-exp1` / `hy4preview-exp2`
+  仍按「实验预览·未列入安全清单」拦下，`hy4-preview-x` 仍在已下架档。
+- `safeOnly` 的配置说明由「17 个」更正为「18 个」。
+
+### 契约与文档
+
+- `contract.mjs` 的 hy4 断言同步改写（旧 3 条 → 新 10 条）：`hy4free` / `hy4std` 在清单里、
+  `hy4-preview` 已置灰、谨慎档只给 `hy4free`、同前缀实验号仍被拦、混元分组同时列出两项；
+  断言总数 117 → 124。
+- README 的白名单与拒绝清单、CHANGELOG、TEST-REPORT 同步；版本号 0.3.6。
+- 用 2026-11-04 18:34 的真实目录（63 个模型）离线复核：18 个白名单全部命中且都有倍率，
+  `hy4free` → caution/allow、`hy4std` → safe/allow，清单内无 unknown 残留。
+
 ## 0.3.5
 
 继续做减法：删掉只在页面挂载时算一次的顶部徽标，避免「顶部当前模型」与「面板里刚选的模型」同屏不一致。
