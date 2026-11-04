@@ -3,7 +3,8 @@
 ## 0.3.6
 
 跟进 WorkBuddy 上游的 HY4 改版：官方目录里 `hy4-preview` 已消失，换成了两个显示名都叫「Hy4」的新 id，
-本版把安全清单与这两项对齐（**仅本地，未推送、未发布；安装到 Coopanion 待确认**）。
+本版把安全清单与这两项对齐（白名单 17 → 18，`hy4-preview` 置灰）。
+已推送到 GitHub `main`（提交 `9fd1e1e`）；未打 tag、未 `npm publish`，安装到 Coopanion 待确认。
 
 ### 安全清单与目录
 
