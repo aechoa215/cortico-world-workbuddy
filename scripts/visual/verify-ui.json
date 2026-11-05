@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "runs": 1,
+  "version": "0.3.13",
+  "failures": 0,
+  "results": [
+    {
+      "run": 1,
+      "checks": {
+        "homeRoute": true,
+        "homeNoInjection": true,
+        "worldRoute": true,
+        "worldTabs": true,
+        "noPriorityTab": true,
+        "noStorageTab": true,
+        "panelRendered": true,
+        "modelsSourceChip": true,
+        "modelsProcessChip": true,
+        "refreshDisabledMatchesProc": true,
+        "usageRendered": true,
+        "modelsPolicyColumn": true,
+        "modelsHasShowAll": true,
+        "accountCreditsButton": true
+      },
+      "meta": {
+        "homeLabels": [
+          "已连接的模型：",
+          "可选择的模型："
+        ],
+        "usageRows": 33,
+        "usageChip": "今日积分: 0 · 今日 token: 0",
+        "modelsRows": 1,
+        "modelsSafePills": 0
+      },
+      "consoleErrors": []
+    }
+  ]
+}

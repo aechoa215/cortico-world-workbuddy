@@ -1,19 +1,19 @@
-# 依赖与构建产物
+# 依赖与打包产物
 node_modules/
-dist/*.map
-
-# 本地运行期文件（凭据缓存、目录缓存、注入备份）
-workbuddy-catalog.json
-index.html.workbuddy-backup
-.env
-*.log
-
-# 测试产物：截图与报告不进仓库，只在本地跑
-scripts/visual/
-
-# 打包产物走 GitHub Release 附件，不进历史
 *.tgz
+npm-debug.log*
+
+# 只留在本地工作副本里供对照的文档，不上传
+TEST-REPORT.md
+KNOWN-ISSUES.md
+
+# 本机运行时数据与凭据（扩展数据目录里的东西，误放进来也不上传）
+workbuddy-catalog.json
+workbuddy-balance.json
+workbuddy-ledger.jsonl
+.env
 
 # 系统垃圾
 .DS_Store
 Thumbs.db
+desktop.ini

@@ -1,7 +1,7 @@
 // src/webui/client.js
 var TEXT = {
   zh: {
-    refresh: "\u4ECE WorkBuddy \u5237\u65B0",
+    refresh: "\u4ECE\u670D\u52A1\u5668\u5237\u65B0",
     refreshing: "\u5237\u65B0\u4E2D\u2026",
     select: "\u9009\u7528",
     selected: "\u5F53\u524D",
@@ -11,9 +11,10 @@ var TEXT = {
     colContext: "\u4E0A\u4E0B\u6587",
     colReasoning: "\u63A8\u7406\u6863",
     colAction: "\u64CD\u4F5C",
-    empty: "\u76EE\u5F55\u4E3A\u7A7A\u3002\u70B9\u4E0A\u65B9\u300C\u4ECE WorkBuddy \u5237\u65B0\u300D\u62C9\u53D6\u672C\u673A\u8D26\u53F7\u53EF\u7528\u7684\u6A21\u578B\u3002",
+    empty: "\u76EE\u5F55\u4E3A\u7A7A\u3002\u70B9\u4E0A\u65B9\u300C\u4ECE\u670D\u52A1\u5668\u5237\u65B0\u300D\u62C9\u53D6\u672C\u673A\u8D26\u53F7\u53EF\u7528\u7684\u6A21\u578B\u3002",
     notRefreshed: "\u5C1A\u672A\u5237\u65B0",
-    lastRefresh: "\u4E0A\u6B21\u5237\u65B0",
+    catalogUpdated: "\u66F4\u65B0\u65F6\u95F4",
+    refreshNeedsProc: "WorkBuddy \u4E3B\u8FDB\u7A0B\u6CA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u4ECE\u670D\u52A1\u5668\u5237\u65B0\u6A21\u578B\u5217\u8868\u3002",
     multiplierFree: "\u514D\u8D39",
     status: "\u72B6\u6001",
     authed: "\u5DF2\u767B\u5F55",
@@ -77,7 +78,7 @@ var TEXT = {
     safeOnlyOff: "safeOnly \u5DF2\u5173\u95ED\uFF1A\u5168\u90E8\u6A21\u578B\u53EF\u8C03\u7528\uFF08\u542B WorkBuddy \u4E0D\u5EFA\u8BAE\u5916\u90E8\u8C03\u7528\u7684\u9879\uFF09"
   },
   en: {
-    refresh: "Refresh from WorkBuddy",
+    refresh: "Refresh from server",
     refreshing: "Refreshing\u2026",
     select: "Use",
     selected: "Current",
@@ -87,9 +88,10 @@ var TEXT = {
     colContext: "Context",
     colReasoning: "Efforts",
     colAction: "Action",
-    empty: 'Catalog is empty. Click "Refresh from WorkBuddy" to fetch models for the signed-in account.',
+    empty: 'Catalog is empty. Click "Refresh from server" to fetch models for the signed-in account.',
     notRefreshed: "never",
-    lastRefresh: "Last refresh",
+    catalogUpdated: "Updated",
+    refreshNeedsProc: "The WorkBuddy main process is not running; cannot refresh from the server.",
     multiplierFree: "free",
     status: "Status",
     authed: "Signed in",
@@ -171,14 +173,6 @@ function fmtMultiplier(m, s) {
   }
   return { text: `x${base}`, free: false, promo: price?.badge ?? "" };
 }
-function fmtTs(ms, s) {
-  if (!ms) return s.notRefreshed;
-  try {
-    return new Date(ms).toLocaleString();
-  } catch {
-    return String(ms);
-  }
-}
 function mountModels(ctx) {
   const s = strings(ctx);
   const { ui } = ctx;
@@ -206,9 +200,15 @@ function mountModels(ctx) {
   function renderChips() {
     const models = state?.models ?? [];
     const safeCount = models.filter((m) => m.safety?.allow).length;
-    stateChip.textContent = `${s.lastRefresh}: ${fmtTs(state?.catalogAt, s)} \xB7 ${safeCount}/${models.length} ${s.models} \xB7 ${state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn}`;
+    const src = state?.catalogSource;
+    const updated = src?.label && src.label !== "\u2014" ? src.label : s.notRefreshed;
+    stateChip.textContent = `${s.catalogUpdated}: ${updated} \xB7 ${safeCount}/${models.length} ${s.models} \xB7 ${state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn}`;
+    stateChip.title = src?.path ?? "";
     currentChip.textContent = `${s.currentModel}: ${state?.model || "\u2014"}`;
     procChip.textContent = state?.running ? s.procRunning : s.procStopped;
+    const running = state?.running === true;
+    refreshBtn.disabled = !running;
+    refreshBtn.title = running ? "" : s.refreshNeedsProc;
   }
   function pickable(m) {
     if (state?.safeOnly === false) return true;
@@ -293,6 +293,10 @@ function mountModels(ctx) {
     errLine.textContent = state?.lastError ?? "";
   }
   refreshBtn.addEventListener("click", async () => {
+    if (state?.running !== true) {
+      ui.toast(s.refreshNeedsProc, "bad");
+      return;
+    }
     const off = ui.disable(refreshBtn);
     refreshBtn.textContent = s.refreshing;
     try {
@@ -309,6 +313,7 @@ function mountModels(ctx) {
     } finally {
       refreshBtn.textContent = s.refresh;
       off.dispose();
+      renderChips();
     }
   });
   ctx.stream({

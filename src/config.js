@@ -12,6 +12,8 @@
  * @property {number} maxTokens 单次 wb_chat 的最大输出 token。
  * @property {boolean} envPrompt 是否把桥接状态写进 system 前缀的环境段。
  * @property {boolean} safeOnly 只允许调用安全清单内的公开对话模型。默认开。
+ * @property {boolean} localCatalog 优先读 WorkBuddy 桌面端落盘的本地目录缓存。默认开。
+ * @property {number} localCatalogDelayMs 检测到主进程后，延后多久读本地缓存（毫秒）。
  * 注意：手动粘贴的 access token 走 ctx.storeSecret()，不落配置。
  * 0.3.0 起不再有 hostInject：扩展不再改写宿主任何文件。
  * 0.3.2 起只桥接本机已登录的 WorkBuddy 客户端。
@@ -31,6 +33,21 @@ export const WB_DEFAULTS = {
    * 默认必须是 true。
    */
   safeOnly: true,
+  /**
+   * 优先读 WorkBuddy 桌面端落盘的本地目录缓存（0.3.7）。
+   *
+   * 桌面端每次启动都会把 /v3/config 原文写进 ~/.workbuddy/cache/，字段与上游一致。
+   * 模型目录不再自动向服务器拉取：只有用户在模型面板点「从服务器刷新」才请求。
+   * 0.3.9 起运行期每 6 秒只 stat 一次缓存目录，变了才异步读文件。
+   */
+  localCatalog: true,
+  /**
+   * 启动时 / 检测到主进程后，延后多久再读本地缓存（毫秒）。
+   *
+   * 桌面端是「启动时落盘」，刚启动的那几秒文件可能还没写完，
+   * 立刻读会拿到上一轮的目录，所以要留一点时间。
+   */
+  localCatalogDelayMs: 3000,
 };
 
 /** World 配置组（WebUI 通用渲染的旋钮）。模型选择走自定义面板，不在这里。 */
@@ -79,6 +96,22 @@ export const WB_CONFIG_GROUP = {
         description:
           '默认开：wb_chat / wb_select_model 只接受 WorkBuddy 官方模型列表里的对话模型（18 个），disabled、内部路由别名、媒体与代码补全模型一律拒绝。关掉会放行这些项，但那既超出本扩展的用途范围，也容易触发上游限制，风险自负。',
         'x-hot': true,
+      },
+      'worlds.workbuddy.localCatalog': {
+        type: 'boolean',
+        title: '优先使用本机缓存目录',
+        description:
+          '开启后，启动时与检测到 WorkBuddy 主进程后各读一次桌面端落盘的模型目录缓存（~/.workbuddy/cache/），并与上一次从服务器抓到的目录比时间，谁新用谁；面板顶部会显示目录的更新时间。运行期每 6 秒只 stat 一次缓存目录（几毫秒），目录没变就不读文件。模型目录不再自动向服务器拉取，只有在模型面板点「从服务器刷新」才请求（且要求主进程在跑）。',
+        'x-hot': true,
+      },
+      'worlds.workbuddy.localCatalogDelayMs': {
+        type: 'number',
+        title: '读到主进程后延迟读缓存（毫秒）',
+        description:
+          '桌面端只在启动时落盘目录，刚启动或刚检测到主进程时文件可能还没写完，延后几秒再读更稳。',
+        minimum: 1000,
+        maximum: 15000,
+        'x-hot': false,
       },
     },
   },

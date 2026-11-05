@@ -9,8 +9,9 @@
        于是必须先 remove 再 add（本脚本固定这么做）。
     2. 「以为装上了其实是旧的」——把**真正打进 tgz 的内容**解出来，与安装目录逐文件比对哈希，
        并与 `/api/extensions` 返回的版本核对，任一处不一致就以非零码退出。
-    3. 「打包绕过 prepack」——优先用 `npm pack`（会跑 `prepack` 重建 `dist/webui.js`），
-       手工 `tar` 只在 npm 不可用时兜底。
+    3. 「打包绕过 prepack」——只认 `npm pack`（会跑 `prepack` 重建 `dist/webui.js`）。npm 不可用
+       或 pack 失败时**直接报错退出**：0.3.9 及以前会悄悄退回手工 `tar`，那条路不跑 prepack，
+       会把一份旧 `dist/webui.js` 装进宿主，而且日志里只留一行黄色感叹号。
 
   版本号规范：每次改动 `package.json` 的 version 必须 bump（0.2.0 → 0.2.1），备份目录按版本命名。
 
@@ -80,52 +81,35 @@ if ($NoPack) {
   if (Test-Path $tgz) { Remove-Item $tgz -Force }
 
   $npmCmd = Get-Command npm -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-  $packed = $false
-  if ($npmCmd) {
-    Step 'npm pack（走 prepack，会重建 dist/webui.js）'
-    # npm pack 的目标目录必须已存在，否则 ENOENT；同版本旧 tgz 又会让下面的
-    # Test-Path 假通过，所以先删旧的、并确保目录存在。
-    if (Test-Path $tgz) { Remove-Item $tgz -Force }
-    New-Item -ItemType Directory -Force $OutDir | Out-Null
-    Push-Location $PackageDir
+  if (-not $npmCmd) {
+    Fail '找不到 npm。打包必须走 `npm pack`（prepack 会重建 dist/webui.js），本脚本不再退回手工 tar'
+  }
+  Step 'npm pack（走 prepack，会重建 dist/webui.js）'
+  # npm pack 的目标目录必须已存在，否则 ENOENT；同版本旧 tgz 又会让下面的
+  # Test-Path 假通过，所以先删旧的、并确保目录存在。
+  if (Test-Path $tgz) { Remove-Item $tgz -Force }
+  New-Item -ItemType Directory -Force $OutDir | Out-Null
+  Push-Location $PackageDir
+  try {
+    # npm 把 notice 写进 stderr；Windows PowerShell 5.1 在 $ErrorActionPreference='Stop'
+    # 下遇到原生命令的 stderr 会抛 NativeCommandError，把正常的 pack 误判成失败，
+    # 静默退回手工 tar、绕过 prepack（0.3.1 修复，审查报告第 6 条的真正触发点）。
+    # 临时降到 Continue，用真实退出码判断，绝不让一行 notice 改变打包路径。
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-      # npm 把 notice 写进 stderr；Windows PowerShell 5.1 在 $ErrorActionPreference='Stop'
-      # 下遇到原生命令的 stderr 会抛 NativeCommandError，把正常的 pack 误判成失败，
-      # 静默退回手工 tar、绕过 prepack（0.3.1 修复，审查报告第 6 条的真正触发点）。
-      # 临时降到 Continue，用真实退出码判断，绝不让一行 notice 改变打包路径。
-      $prevEap = $ErrorActionPreference
-      $ErrorActionPreference = 'Continue'
-      try {
-        $out = & $npmCmd.Source pack --pack-destination $OutDir 2>&1 | Out-String
-        $packCode = $LASTEXITCODE
-      } finally {
-        $ErrorActionPreference = $prevEap
-      }
-      if ($packCode -ne 0) { Write-Host $out -ForegroundColor Yellow }
-      $packed = ($packCode -eq 0) -and (Test-Path $tgz)
-    } catch {
-      $packed = $false
-    } finally { Pop-Location }
-    if (-not $packed) { Write-Host '  ! npm pack 失败，退回手工 tar（dist 可能不是最新）' -ForegroundColor Yellow }
-  } else {
-    Write-Host '  ! 找不到 npm，退回手工 tar（dist 可能不是最新）' -ForegroundColor Yellow
-  }
-
-  if (-not $packed) {
-    $stagePkg = Join-Path $work 'package'
-    New-Item -ItemType Directory -Force $stagePkg | Out-Null
-    $include = @('src', 'dist', 'assets', 'scripts', 'README.md', 'CHANGELOG.md', 'LICENSE', 'SECURITY.md', 'describe.json', 'package.json')
-    foreach ($item in $include) {
-      $src = Join-Path $PackageDir $item
-      if (Test-Path $src) { Copy-Item $src -Destination $stagePkg -Recurse -Force }
-      else { Write-Host "  ! 缺少 $item（跳过）" -ForegroundColor Yellow }
+      $out = & $npmCmd.Source pack --pack-destination $OutDir 2>&1 | Out-String
+      $packCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $prevEap
     }
-    # 测试产物不进包：verify-ui 的截图与报告只留在仓库里
-    $visual = Join-Path $stagePkg 'scripts\visual'
-    if (Test-Path $visual) { Remove-Item $visual -Recurse -Force }
-    tar -czf $tgz -C $work package
-    if ($LASTEXITCODE -ne 0) { Fail 'tar 打包失败' }
-  }
+    if ($packCode -ne 0) {
+      Write-Host $out -ForegroundColor Yellow
+      Fail "npm pack 失败（退出码 $packCode）。不退回手工 tar：那条路会绕过 prepack，装上一份旧 dist/webui.js"
+    }
+    if (-not (Test-Path $tgz)) { Fail "npm pack 报告成功，但找不到 $tgz" }
+  } finally { Pop-Location }
+
   Step "已打包：$tgz（$((Get-Item $tgz).Length) 字节）"
 }
 

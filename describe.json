@@ -92,6 +92,36 @@
         "additionalProperties": false,
         "properties": {}
       }
+    },
+    {
+      "name": "wb_selfcheck",
+      "description": "Bridge self-check, the tool behind the operator typing \"/wb\". action=status (default) returns one status table: WorkBuddy main process and mainPid, whether a login was found (masked; the token itself is never printed), where the model catalog came from and how many models it holds, how many are callable under the safe list, the local cache file in use, when the catalog was last refreshed, the current model with its multiplier, and today's credit/token usage. action=logs returns the most recent lines of Coopanion core.log that belong to worlds.workbuddy (lines: 1-200, default 20); if the log cannot be read it says so instead of failing. action=models lists the currently callable models with multipliers (same rendering as wb_list_models). Read-only, local only, spends nothing.",
+      "summary": {
+        "zh": "wb_selfcheck",
+        "en": "wb_selfcheck"
+      },
+      "tags": [
+        "read"
+      ],
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "logs",
+              "models"
+            ],
+            "description": "status (default): the self-check table. logs: recent worlds.workbuddy log lines. models: callable models with multipliers."
+          },
+          "lines": {
+            "type": "number",
+            "description": "For action=logs: how many matching log lines to return, 1-200. Default 20."
+          }
+        }
+      }
     }
   ],
   "events": [
@@ -103,5 +133,5 @@
       }
     }
   ],
-  "envPrompt": "## WorkBuddy bridge\n\nThis machine has a signed-in WorkBuddy desktop app bridged in (signed in: {{workbuddy.authed}}).\nThe model catalog holds {{workbuddy.catalogSize}} models. The currently selected model is `{{workbuddy.model}}` with default credit multiplier {{workbuddy.multiplier}}.\nWorkBuddy desktop main process: {{workbuddy.process}}.\nSpent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.todayTokens}} tokens (locally recorded).\nThe multiplier above is the model's own price plus any time-limited price change this bridge can verify at the moment (including free windows). An offer that only shows a badge may not change the price; `wb_list_models` marks which offers are active and their hours.\n\n- Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.\n- Safe-list gate: {{workbuddy.safeOnly}}. When it is `on`, only the models WorkBuddy publishes as public chat models are callable — `disabled` entries, internal routing aliases (`auto`, `fast-model`, `balanced-model`, `deep-model`), media/code models and delisted ones are refused. Do not try to work around a refusal; tell the user why and offer a safe model instead. `wb_list_models` with `all=true` shows the refused ones with reasons.\n- Use `wb_select_model` when the user asks to switch the WorkBuddy model.\n- `wb_chat` only works while the WorkBuddy desktop main process is running; otherwise it returns「未检测到 WorkBuddy 主进程」. Every call spends the user's own credits at that model's multiplier. Call it when the user asks for WorkBuddy or when a WorkBuddy model would clearly help; do not route every turn through it.\n- `wb_credits` is read-only and costs nothing (also requires the desktop process)."
+  "envPrompt": "## WorkBuddy bridge\n\nThis machine has a signed-in WorkBuddy desktop app bridged in (signed in: {{workbuddy.authed}}).\nThe model catalog holds {{workbuddy.catalogSize}} models. The currently selected model is `{{workbuddy.model}}` with default credit multiplier {{workbuddy.multiplier}}.\nWorkBuddy desktop main process: {{workbuddy.process}}.\nSpent today through the bridge: {{workbuddy.todayCredit}} credits / {{workbuddy.todayTokens}} tokens (locally recorded).\nThe multiplier above is the model's own price plus any time-limited price change this bridge can verify at the moment (including free windows). An offer that only shows a badge may not change the price; `wb_list_models` marks which offers are active and their hours.\n\n- Use `wb_list_models` to see every model with its multiplier before choosing; prefer low-multiplier models for casual tasks.\n- Safe-list gate: {{workbuddy.safeOnly}}. When it is `on`, only the models WorkBuddy publishes as public chat models are callable — `disabled` entries, internal routing aliases (`auto`, `fast-model`, `balanced-model`, `deep-model`), media/code models and delisted ones are refused. Do not try to work around a refusal; tell the user why and offer a safe model instead. `wb_list_models` with `all=true` shows the refused ones with reasons.\n- Use `wb_select_model` when the user asks to switch the WorkBuddy model.\n- `wb_chat` only works while the WorkBuddy desktop main process is running; otherwise it returns「未检测到 WorkBuddy 主进程」. Every call spends the user's own credits at that model's multiplier. Call it when the user asks for WorkBuddy or when a WorkBuddy model would clearly help; do not route every turn through it.\n- `wb_credits` is read-only and costs nothing (also requires the desktop process).\n- Self-check shortcut: when the operator types `/wb`, run the `wb_selfcheck` tool and pass its output through unchanged (no extra commentary). `/wb` alone = `action=status` (process and mainPid, whether a login was found — masked, never the token, catalog source and model count, callable count, local cache file, last refresh, current model and multiplier, today's credits); `/wb logs [n]` = `action=logs` (most recent `worlds.workbuddy` lines from Coopanion's `core.log`, default 20, 1-200); `/wb models` = `action=models` (callable models with multipliers). Read-only and local, costs nothing."
 }

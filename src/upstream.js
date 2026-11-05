@@ -380,8 +380,11 @@ function numberOrUndefined(v) {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** 解析上游模型条目。credits 形如 "x0.79" / "0.79" / 0.79，倍率完全由上游给出。 */
-function normalizeModel(m) {
+/**
+ * 解析上游模型条目。credits 形如 "x0.79" / "0.79" / 0.79，倍率完全由上游给出。
+ * 0.3.7 起导出：本地缓存（localcatalog.js）里的 models[] 与上游同形，复用这一份解析。
+ */
+export function normalizeModel(m) {
   if (!m || typeof m !== 'object') return null;
   const id = m.id ?? m.model ?? m.name;
   if (typeof id !== 'string' || id === '') return null;

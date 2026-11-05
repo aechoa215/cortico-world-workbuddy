@@ -9,3 +9,6 @@ workbuddy-catalog.json
 
 # 测试报告只作归档，不进安装包
 TEST-REPORT.md
+
+# 已知问题清单只在本仓库里对照用，无法与 GitHub issue 列表对齐，不进安装包
+KNOWN-ISSUES.md

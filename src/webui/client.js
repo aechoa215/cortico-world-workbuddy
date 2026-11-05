@@ -6,7 +6,7 @@
 
 const TEXT = {
   zh: {
-    refresh: '从 WorkBuddy 刷新',
+    refresh: '从服务器刷新',
     refreshing: '刷新中…',
     select: '选用',
     selected: '当前',
@@ -16,9 +16,10 @@ const TEXT = {
     colContext: '上下文',
     colReasoning: '推理档',
     colAction: '操作',
-    empty: '目录为空。点上方「从 WorkBuddy 刷新」拉取本机账号可用的模型。',
+    empty: '目录为空。点上方「从服务器刷新」拉取本机账号可用的模型。',
     notRefreshed: '尚未刷新',
-    lastRefresh: '上次刷新',
+    catalogUpdated: '更新时间',
+    refreshNeedsProc: 'WorkBuddy 主进程没在跑，无法从服务器刷新模型列表。',
     multiplierFree: '免费',
     status: '状态',
     authed: '已登录',
@@ -83,7 +84,7 @@ const TEXT = {
     safeOnlyOff: 'safeOnly 已关闭：全部模型可调用（含 WorkBuddy 不建议外部调用的项）',
   },
   en: {
-    refresh: 'Refresh from WorkBuddy',
+    refresh: 'Refresh from server',
     refreshing: 'Refreshing…',
     select: 'Use',
     selected: 'Current',
@@ -93,9 +94,10 @@ const TEXT = {
     colContext: 'Context',
     colReasoning: 'Efforts',
     colAction: 'Action',
-    empty: 'Catalog is empty. Click "Refresh from WorkBuddy" to fetch models for the signed-in account.',
+    empty: 'Catalog is empty. Click "Refresh from server" to fetch models for the signed-in account.',
     notRefreshed: 'never',
-    lastRefresh: 'Last refresh',
+    catalogUpdated: 'Updated',
+    refreshNeedsProc: 'The WorkBuddy main process is not running; cannot refresh from the server.',
     multiplierFree: 'free',
     status: 'Status',
     authed: 'Signed in',
@@ -182,15 +184,6 @@ function fmtMultiplier(m, s) {
   return { text: `x${base}`, free: false, promo: price?.badge ?? '' };
 }
 
-function fmtTs(ms, s) {
-  if (!ms) return s.notRefreshed;
-  try {
-    return new Date(ms).toLocaleString();
-  } catch {
-    return String(ms);
-  }
-}
-
 function mountModels(ctx) {
   const s = strings(ctx);
   const { ui } = ctx;
@@ -227,11 +220,20 @@ function mountModels(ctx) {
   function renderChips() {
     const models = state?.models ?? [];
     const safeCount = models.filter((m) => m.safety?.allow).length;
-    stateChip.textContent = `${s.lastRefresh}: ${fmtTs(state?.catalogAt, s)} · ${safeCount}/${models.length} ${s.models} · ${
+    // 「更新时间」直接取服务端算好的 catalogSource.label：本地缓存是缓存文件的 mtime，
+    // 服务器那份是抓取时间，界面不用自己猜。
+    const src = state?.catalogSource;
+    const updated = src?.label && src.label !== '—' ? src.label : s.notRefreshed;
+    stateChip.textContent = `${s.catalogUpdated}: ${updated} · ${safeCount}/${models.length} ${s.models} · ${
       state?.safeOnly === false ? s.safeOnlyOff : s.safeOnlyOn
     }`;
+    stateChip.title = src?.path ?? '';
     currentChip.textContent = `${s.currentModel}: ${state?.model || '—'}`;
     procChip.textContent = state?.running ? s.procRunning : s.procStopped;
+    // 从服务器刷新要桌面端主进程配合（会话与 token 都由它提供）：没在跑就禁用并说明原因。
+    const running = state?.running === true;
+    refreshBtn.disabled = !running;
+    refreshBtn.title = running ? '' : s.refreshNeedsProc;
   }
 
   /** 当前是否允许选这个模型：safeOnly 开时只放行安全清单。 */
@@ -319,6 +321,8 @@ function mountModels(ctx) {
     renderTable();
   });
 
+  // 只读当前状态。挂载时**不**自动 invoke('refresh')：0.3.7 起模型目录不再自动向服务器拉取，
+  // 目录来自磁盘 + 本机缓存；拉服务器必须是用户主动点按钮。
   async function load() {
     state = await ctx.invoke('state');
     renderChips();
@@ -327,6 +331,10 @@ function mountModels(ctx) {
   }
 
   refreshBtn.addEventListener('click', async () => {
+    if (state?.running !== true) {
+      ui.toast(s.refreshNeedsProc, 'bad');
+      return;
+    }
     const off = ui.disable(refreshBtn);
     refreshBtn.textContent = s.refreshing;
     try {
@@ -343,6 +351,8 @@ function mountModels(ctx) {
     } finally {
       refreshBtn.textContent = s.refresh;
       off.dispose();
+      // 失败时没有走 load()，这里按当前状态重新决定按钮可用性（主进程没跑就别再点）。
+      renderChips();
     }
   });
 

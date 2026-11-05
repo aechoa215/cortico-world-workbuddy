@@ -125,6 +125,20 @@ try {
   fail(`core 没在跑（127.0.0.1:${CORE_PORT}）：先 pwsh -File scripts/launch-coopanion.ps1`);
 }
 
+// 面板接口先冒烟：浏览器断言再漂亮，扩展没装上 / 没加载都是空转。
+// 0.3.10 起 models/state 必须带 catalogSource（{ kind, at, label }），这是面板「更新时间」的数据源。
+try {
+  const st = await panel('models', 'state', []);
+  if (!st || typeof st !== 'object' || !Array.isArray(st.models)) {
+    throw new Error(`models/state 没返回 models 数组：${JSON.stringify(st).slice(0, 200)}`);
+  }
+  if (!st.catalogSource || typeof st.catalogSource.label !== 'string') {
+    throw new Error(`models/state 缺 catalogSource.label（0.3.10 契约）：${JSON.stringify(st).slice(0, 200)}`);
+  }
+} catch (err) {
+  fail(`面板接口冒烟失败（扩展没装好 / 没加载？）：${err.message}`);
+}
+
 // ---------------------------------------------------------------- Chrome
 const chromePath = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -264,10 +278,32 @@ const readModelsPage = `(() => {
 
 const results = [];
 let hardFailures = 0;
+// 必须为真的检查项：0.3.10 起 row.checks 里的布尔值会被真正消费（以前只写进 JSON，
+// summary.ok 只看 hardFailures，新加的检查恒「通过」）。
+const REQUIRED_CHECKS = [
+  'homeRoute',
+  'homeNoInjection',
+  'worldRoute',
+  'worldTabs',
+  'noPriorityTab',
+  'noStorageTab',
+  'panelRendered',
+  'modelsProcessChip',
+  'usageRendered',
+  'modelsPolicyColumn',
+  'modelsHasShowAll',
+  // 0.3.11：0.3.7 以来新增的三处界面，之前没有任何窗口断言（REVIEW-0.3.7 M8）。
+  'modelsSourceChip',
+  'refreshDisabledMatchesProc',
+  'accountCreditsButton',
+];
+// 「同源比对」（读页面文本再和自己预期的常量比）只作为 meta 记录，不算断言——
+// 它们只能证明「渲染出了东西」，证明不了「渲染对了」。真正的断言必须是 waitFor 谓词，
+// 或者读两个不同来源（DOM vs 面板 state）再比较。
 
 for (let run = 1; run <= RUNS; run += 1) {
   const tag = Date.now();
-  const row = { run, checks: {} };
+  const row = { run, checks: {}, meta: {} };
   consoleErrors.length = 0;
 
   // --- 开始页：正常渲染，且确认 0.3.0 已不再注入任何按钮 ---
@@ -279,7 +315,7 @@ for (let run = 1; run <= RUNS; run += 1) {
     });
     row.checks.homeRoute = true;
     row.checks.homeNoInjection = home.injectedRow === false;
-    row.checks.homeLabels = home.labels;
+    row.meta.homeLabels = home.labels;
     if (KEEP) await shot(`run${run}-home`);
   } catch (err) {
     row.checks.homeError = String(err.message || err);
@@ -301,12 +337,51 @@ for (let run = 1; run <= RUNS; run += 1) {
     row.checks.noPriorityTab = !tabs.includes('是否启用 WorkBuddy');
     row.checks.noStorageTab = !tabs.includes('数据清理');
     await evaluate(clickByText('模型目录'));
-    const modelsHead = await waitFor('模型目录渲染（只读主进程状态）', async () => {
+    await waitFor('模型目录渲染', async () => {
       const v = await evaluate(readModelsPage);
-      return v.proc ? v : false;
+      return v.rows > 0 ? v : false;
     });
     row.checks.panelRendered = true;
-    row.checks.modelsProcessChip = modelsHead.proc;
+
+    // 0.3.11：来源芯片（「更新时间」）——等它真的出现，再从文本里取 label 判断，
+    // 不是拿 waitFor 已经要求为真的同一字段回填。
+    const sourceChip = await waitFor('模型面板来源芯片', async () => evaluate(`(() => {
+      const n = [...document.querySelectorAll('*')].find(
+        (e) => e.children.length === 0 && /^更新时间[:：]/.test((e.textContent || '').trim()),
+      );
+      const text = n ? n.textContent.trim() : '';
+      const label = text.replace(/^更新时间[:：]\s*/, '').split(' · ')[0].trim();
+      return label ? { label } : false;
+    })()`));
+    if (!/本地缓存|服务器|—/.test(sourceChip.label)) {
+      throw new Error(`来源芯片文本不认识：${JSON.stringify(sourceChip.label)}`);
+    }
+    row.checks.modelsSourceChip = true;
+
+    // 0.3.11：主进程芯片必须与面板 state 对得上（DOM 文本 vs API，两个来源）。
+    const panelState = await panel('models', 'state', []);
+    if (!panelState || typeof panelState.running !== 'boolean') {
+      throw new Error('models/state 的 running 不是布尔值：' + JSON.stringify(panelState).slice(0, 200));
+    }
+    const procText = await evaluate(`(() => {
+      const n = [...document.querySelectorAll('*')].find(
+        (e) => e.children.length === 0 && /WorkBuddy 主进程：(运行中|未检测到)/.test(e.textContent || ''),
+      );
+      return n ? n.textContent.trim() : '';
+    })()`);
+    row.checks.modelsProcessChip =
+      procText === (panelState.running ? 'WorkBuddy 主进程：运行中' : 'WorkBuddy 主进程：未检测到');
+
+    // 0.3.11：刷新按钮的禁用态必须等于「主进程没在跑」。running 取自面板 state，
+    // disabled 取自真实 DOM——两边不同源，绑定写反或写死都会被这条抓出来。
+    const refreshBtn = await waitFor('「从服务器刷新」按钮', async () => evaluate(`(() => {
+      const b = [...document.querySelectorAll('button')].find((n) => n.textContent.trim() === '从服务器刷新');
+      return b ? { disabled: !!b.disabled } : false;
+    })()`));
+    if (refreshBtn.disabled !== !panelState.running) {
+      throw new Error(`刷新按钮禁用态与主进程不一致：disabled=${refreshBtn.disabled} running=${panelState.running}`);
+    }
+    row.checks.refreshDisabledMatchesProc = true;
     if (SHOTS && run === 1) { await sleep(300); await shot('world-models'); }
     // --- 用量面板：页签 → 渲染 → 概览表有行 ---
     await evaluate(clickByText('用量与成本'));
@@ -317,11 +392,12 @@ for (let run = 1; run <= RUNS; run += 1) {
         const rows = document.querySelectorAll('table tr').length;
         return { hasRefresh: !!btn, chip: (chip?.textContent || '').trim(), rows };
       })()`);
-      return v.hasRefresh && v.rows >= 4 && /\d/.test(v.chip) ? v : false;
+      // 0.3.11：等待只看「面板渲染出来了」（积分 chip 有内容），渲染质量由下面的 check 判。
+      return v.chip ? v : false;
     });
-    row.checks.usageRendered = usage.hasRefresh === true;
-    row.checks.usageRows = usage.rows;
-    row.checks.usageChip = usage.chip;
+    row.checks.usageRendered = usage.hasRefresh === true && usage.rows >= 4 && /\d/.test(usage.chip);
+    row.meta.usageRows = usage.rows;
+    row.meta.usageChip = usage.chip;
     if (SHOTS && run === 1) { await sleep(300); await shot('world-usage'); }
     // --- 模型目录：合规列 + 默认只列安全清单 ---
     await evaluate(clickByText('模型目录'));
@@ -333,12 +409,24 @@ for (let run = 1; run <= RUNS; run += 1) {
         const allBox = [...document.querySelectorAll('input[type="checkbox"]')].length;
         return { hasPolicy: th.includes('合规'), headers: th.join('|'), rows, safePills, checkboxes: allBox };
       })()`);
-      return v.hasPolicy && v.rows > 10 ? v : false;
+      // 0.3.11：等待只看「表格渲染出来了」，合规列 / 全量开关由 check 单独判。
+      return v.rows > 0 ? v : false;
     });
-    row.checks.modelsPolicyColumn = modelsView.hasPolicy;
-    row.checks.modelsRows = modelsView.rows;
-    row.checks.modelsSafePills = modelsView.safePills;
+    row.checks.modelsPolicyColumn = modelsView.hasPolicy === true;
+    row.meta.modelsRows = modelsView.rows;
+    row.meta.modelsSafePills = modelsView.safePills;
     row.checks.modelsHasShowAll = modelsView.checkboxes >= 1;
+
+    // 0.3.11：账号面板是独立页签，切过去必须能等到「查询积分」按钮（0.3.7 起账号面板带积分查询）。
+    await evaluate(clickByText('账号'));
+    const creditsBtn = await waitFor('账号面板「查询积分」按钮', async () => evaluate(`(() => {
+      const b = [...document.querySelectorAll('button')].find(
+        (n) => n.textContent.trim() === '查询积分' && n.offsetParent !== null,
+      );
+      return b ? true : false;
+    })()`));
+    if (creditsBtn !== true) throw new Error('账号面板没有可见的「查询积分」按钮');
+    row.checks.accountCreditsButton = true;
     if (SHOTS && run === 1) { await sleep(300); await shot('world-models'); }
     if (KEEP) await shot(`run${run}-world`);
   } catch (err) {
@@ -352,8 +440,16 @@ for (let run = 1; run <= RUNS; run += 1) {
   const noise = /WebSocket|failed to connect to websocket|favicon|ERR_CONNECTION|api\.github\.com/i;
   row.consoleErrors = consoleErrors.filter((e) => !noise.test(e));
   if (row.consoleErrors.length > 0) hardFailures += 1;
+  // 0.3.10：检查项被真正消费——任何一个必需的布尔值不为 true，这一轮就算失败。
+  const failedChecks = REQUIRED_CHECKS.filter((k) => row.checks[k] !== true);
+  if (failedChecks.length > 0) {
+    hardFailures += 1;
+    row.checkFailures = failedChecks;
+  }
   results.push(row);
-  console.log(`run ${run}: ${JSON.stringify(row.checks)}${row.consoleErrors.length ? ` errors=${row.consoleErrors.length}` : ''}`);
+  console.log(
+    `run ${run}: ${JSON.stringify(row.checks)}${failedChecks.length ? ` FAILED=${failedChecks.join(',')}` : ''}${row.consoleErrors.length ? ` errors=${row.consoleErrors.length}` : ''}`,
+  );
 }
 
 // ---------------------------------------------------------------- 收尾

@@ -1,10 +1,275 @@
 # 更新日志
 
+## 0.3.13
+
+两件事：把 `KNOWN-ISSUES.md` 挡在发布包外，以及把 README 按阅读顺序重排。**没有改任何代码**，
+`src/`、`scripts/`、`dist/` 与 0.3.12 逐字节相同。
+
+### 发布包
+
+- `.npmignore` 增加 `KNOWN-ISSUES.md`：这份清单要对照 GitHub issue 列表，目前对不齐，所以只留在仓库目录里
+  供本地对照，**不进 npm 包 / 安装包**。
+- `npm pack --dry-run` 已核对：清单里没有 `KNOWN-ISSUES.md`（也没有 `TEST-REPORT.md`、`scripts/visual/`）。
+- README 新增说明：它在仓库里、但不进包，并给出用 `npm pack --dry-run` 自查的方法。
+
+### README 重排
+
+- 章节改成阅读顺序：这是什么 → 装之前要知道什么 → 快速开始（安装 / 第一次打开 / 卸载与还原）→
+  配置项一览 → 模型目录怎么来 → 安全清单与闸门 → 面板与自查（含工具与 `/wb`）→ 已知问题与已解决问题 →
+  常见问题 → 版本与发版 → 宿主文件零改动 → 许可与致谢。
+- 配置表补上 `enabled`，与 `model` / `credentialsDir` / `baseUrl` / `maxTokens` / `envPrompt` /
+  `safeOnly` / `localCatalog` / `localCatalogDelayMs` 一起，九个键齐全。
+- 已知问题、已解决问题各压成一句，指向 `KNOWN-ISSUES.md`，不在 README 里堆表。
+- 逐版本的历史细节（0.3.7 / 0.3.8 / 0.3.9 / 0.3.10 各自修了什么）收进本 CHANGELOG 与 TEST-REPORT，
+  README 只描述**当前有效行为**。
+- 新增「常见问题」：空目录、刷新按钮禁用、模型被拒、倍率显示原价、窗口不出来、卸载残留、`/wb` 没反应。
+- 全文版本号、tgz 名、备份路径、tag 跟到 0.3.13。
+
+### 契约与文档
+
+- 契约 235 条不变（本版没有改源码与工具声明，`describe.json` 与 0.3.12 相同）。
+- 版本号 0.3.13；`scripts/visual/verify-ui.json` 的 `version` 跟到 0.3.13，并注明结果仍是 0.3.11 那次跑测。
+
+本地交付；未推送、未发布，安装待确认。
+
+## 0.3.12
+
+两件事：在 `SECURITY.md` 里补一份面向使用者的风险披露，并给桥接加一个聊天里的只读自查入口 `/wb`。
+
+### 使用风险（SECURITY.md）
+
+- 新增「使用风险」一节，说清性质：复用本机已登录的 WorkBuddy 客户端能力，按客户端自己的请求形状调用，
+  没有官方 API 授权，**可能不符合 WorkBuddy 的服务条款**。
+- 后果概率表只用文字（限流较常见 / 账号警告有可能 / 封号存在可能 / 订阅终止不退款存在可能 /
+  插件某天失效很可能），不编造数字。
+- 写明作者不承担什么（不保证长期可用、不对账号与余额负责、无担保无补偿），给三条自保建议
+  （优先小号、发现异常立刻停用、保留官方 API 退路），并澄清「你付过钱」不等于「厂商允许这样调用」。
+
+### `/wb` 自查
+
+- 新增 `wb_selfcheck` 工具（`action=status|logs|models`）与 `src/selfcheck.js`：`/wb` 输出状态表（主进程与 mainPid、
+  登录态只显示脱敏存在性、目录来源与模型数、安全清单可调用数、本地缓存路径、上次刷新时间、当前模型与倍率、
+  今日积分）；`/wb logs [n]` 读 `core.log` 里 `worlds.workbuddy` 的最近 n 行（默认 20，1-200，读不到如实说明）；
+  `/wb models` 复用 `wb_list_models` 的渲染列出可调用模型与倍率。
+- 只用 `node:fs` / `node:path`：不联网、不加依赖、不写文件，任何失败都折成一句「读不到」而不抛错；token 永不打印。
+- Coopanion 的 World API 没有注册斜杠指令的钩子（`World` 接口只有 tools / webUi / envPromptVars），
+  所以 `/wb` 落在 `wb_selfcheck` 工具上，并在 `src/ENV_PROMPT.md` 里约定「操作者发 `/wb` → 调 `wb_selfcheck` 原样转达」。
+
+### 契约与文档
+
+- 契约新增 9 条：`wb_selfcheck` 工具声明与 action 三值、状态表含八类字段且不含 token、安全清单计数按 `classifyModel` 口径、
+  没有日志文件时 `readRecentWorldLogs` 返回 `ok:false` 不抛、`/wb logs` 总会给出可读结果、`/wb models` 含倍率、
+  未知 action 回落成状态表。断言总数 226 → **235**。
+- README / CHANGELOG / TEST-REPORT 同步；版本号 0.3.12。`scripts/visual/verify-ui.json` 的 `version` 随版本更新，
+  并注明结果仍是 0.3.11 那次跑测（本版没改界面）。
+
+本地交付；未推送、未发布，安装待确认。
+
+## 0.3.11
+
+补上 0.3.10 验收（`VERIFY-0.3.10.md` §1.3）漏掉的那一半：0.3.10 把 `REQUIRED_CHECKS` 的消费机制修好了，
+但 0.3.7 以来新增的三处界面（来源芯片、刷新按钮禁用态、账号面板积分按钮）**一条窗口断言都没有**，
+`REQUIRED_CHECKS` 里还是 0.3.9 的 11 个旧键。本版把这三条补成真实断言，并顺手修掉三条同义反复的旧检查。
+
+### 新界面窗口断言（REVIEW-0.3.7 M8）
+
+- **`modelsSourceChip`**：`waitFor` 等「更新时间」芯片出现，从文本里取出 `catalogSourceView().label`，
+  再断言它匹配 `本地缓存` / `服务器` / `—`。等不到或文本不认识都会让这一轮失败。
+- **`refreshDisabledMatchesProc`**：「从服务器刷新」按钮的 `disabled` 从 **DOM** 读，主进程 `running`
+  从 **`models/state` 接口**读，断言 `disabled === !running`。两个来源不同，绑定写反或写死都能抓到。
+- **`accountCreditsButton`**：切到账号面板后 `waitFor`「查询积分」按钮可见。
+- 三个键都进了 `REQUIRED_CHECKS`（11 → 14）；删掉从未被引用的 `META_KEYS` 死常量。
+
+### 同义反复的旧检查
+
+- `modelsProcessChip`：不再回填 `waitFor` 已要求为真的 `v.proc`，改为「DOM 芯片文本 vs 接口 `running`」比对。
+- `usageRendered` / `modelsPolicyColumn`：`waitFor` 只等面板/表格出现，质量判据（有刷新按钮、行数、合规列）单独判，
+  取值可以真的为 `false`。
+
+### 契约与文档
+
+- 契约新增 13 条静态断言：`REQUIRED_CHECKS` 必须含三个新键、每个键只在判据通过后置 `true`、
+  没有 `META_KEYS`、来源芯片走 `waitFor`、刷新按钮断言是跨来源比较、三条旧检查不再是同义反复。断言总数 213 → **226**。
+- 负向自证（临时副本，跑完即删）：把来源芯片谓词改成永远等不到 → `FAILED=…modelsSourceChip…`、`ok:false`、退出码 1；
+  把刷新按钮的比较反写成 `disabled !== running` → `FAILED=…refreshDisabledMatchesProc…`、`ok:false`、退出码 1。
+- README 补三条断言的说明；版本号 0.3.11；`scripts/visual/verify-ui.json` 的 `version` 由跑测自动写成 0.3.11。
+  **本地交付；未推送、未发布，安装待确认。**
+
+## 0.3.10
+
+按 `PROPOSAL-0.3.10.md`（v2，已吸收 `REVIEW-0.3.10.md` 对 v1 的 B1–B5 否定）实现：磁盘目录缓存净化、
+本地缓存判定与过滤同源、未来 mtime 的身份指纹、候选文件改 `lstat`、面板两条出口形状统一、
+安装脚本去掉手工 tar 兜底、UI 验证脚本的断言机制重写（**本地交付；未推送、未发布，安装待确认**）。
+
+### 目录缓存（#2 / #3 / #9）
+
+- **#2 `loadCatalogFromDisk()` 不再裸奔接收**：models 用 `normalizeModel`（`id ?? model ?? name`）
+  逐条过滤、**只过滤不重写**（不 map 成 11 个字段，`promos` 与旧格式额外字段原样保留）；
+  promos 校验 `modelIds` 是数组；`attachPromos` 独立 try/catch，失败就把促销清空、不留半状态；
+  `saved.at` 读回时钳到「不晚于现在」（0.3.8 写出的未来 `at` 会让本地缓存链路永久失效）。
+  读取失败改为留一行 warn，不再静默吞掉（以前一个 `ReferenceError` 会被吞成「没有目录」）。
+- **#3 判定与过滤同源**：`classifyCacheDoc()` 按同一个 `normalizeModel` 谓词过滤，全过滤光才判
+  `shape`；缺 `id` 的按 `model` / `name` 兜底取名。一条 `{ model: 'x' }` 脏数据不再废掉整份 62 模型缓存。
+- **#3 world 层模型数下限**：手上已有完整目录时，模型数更少的候选（哪怕 mtime 更新、带促销）不采纳，
+  记一条跳过原因。堵住「1 模型脏文档顶掉 62 模型目录」的污染路径；合法缩容会被保守拒绝，手动刷新可纠正。
+- **#9 身份判决指纹 `_localVerdict = { path, 原始 mtime }`**：未来 mtime 的文件采纳后，`catalogAt` 被钳到
+  now，此后每轮兜底扫描都判「更新」恒真——按文件身份去重，同一版本只判决一次（每会话最多一次冗余落盘）。
+  采纳与闸门拒绝记指纹，单纯「不比现有新」不记；`start()` 复位。
+
+### 缓存扫描（#4）
+
+- `listCacheFiles()` 的 `statSync` 改 `lstatSync`：符号链接 / 重解析点不跟随，`isFile()` 对链接项为 false，
+  缓存目录里链到网络盘的文件不会被读、也不会拖住整次扫描。
+
+### 面板出口形状（#5 / #6）
+
+- **#5** `usage/state` 的 `catalogSource` 改用 `catalogSourceView()`，与 `models/state` 同形
+  （`{ kind, at, path?, label }`），不再一边是字符串、一边是对象。
+- **#6** `models/refresh` 返回的模型穿过 `describeModel()`，带上 `safety` / `price`，与 `models/state` 一致。
+
+### 打包与验证脚本（#8 / #10 / #11）
+
+- **#8** `scripts/reinstall.ps1` 删掉手工 `tar` 兜底：找不到 npm 或 `npm pack` 失败直接 `Fail` 退出。
+  手工 tar 不跑 `prepack`，会把旧 `dist/webui.js` 装进宿主，只留一行黄色感叹号。
+- **#11** `scripts/verify-ui.mjs` 的断言机制重写：新检查必须是 `waitFor` 谓词或显式 throw，
+  不再有永远 `ok: true` 的占位检查；先跑 `panel('models','state')` 冒烟再谈 smoke。
+- **#10** `scripts/visual/verify-ui.json` 的 `version` 升到 0.3.10，契约新增「与该文件版本一致」的断言。
+
+### 契约与文档
+
+- `contract.mjs` +23 条（189 → 212）：磁盘缓存净化（坏条目 / 脏促销 / 坏 JSON 的 warn、无损读写、
+  `at` 钳制）、判定同源（混脏仍 62 模型、兜底取名、全废判 shape）、B3 回归（1 模型文档不顶掉完整目录，
+  warn 只一次）、未来 mtime 每会话只采纳一次、`lstat` 静态断言、`usage/state` 与 `models/refresh` 形状、
+  `reinstall.ps1` 无 tar 兜底（静态）、`verify-ui.json` 版本一致；S4-4 改为「兜底取名合法并被采纳」并补
+  S4-5（全无效判 shape），S4-3 改为按指纹早退判「不重读风暴」。
+- `SECURITY.md` 写明 0.3.10 起候选文件用 `lstat` 检查、符号链接不跟随。
+- 版本号 0.3.10。
+
+## 0.3.9
+
+按 `PROPOSAL-0.3.9.md`（v2，已吸收 `REVIEW-0.3.9.md` 的 B1–B7 / S1–S7）实现：本地目录读取窄版异步、
+选择规则合一、6 秒轮询里的零新机制周期复查，以及读到半写文件时的重试（**本地交付；未推送、未发布，安装待确认**）。
+
+### 本地目录读取
+
+- **读文件改异步**：`readLocalCatalog()` 变 `async`，只把 `readFile` 换成 `node:fs/promises` 并带
+  AbortSignal，整次扫描共享一个 5 秒总时限（超时真取消在途读）；`readdirSync` / `statSync` 保留——
+  实测一次 0.2–0.3 ms，保持扫描原子性，也不用把几十个请求塞进默认 4 线程的 libuv 线程池。
+  读文件不再阻塞主线程；启动那次 `loadCatalogFromDisk()` 仍是同步读（只读本扩展自己的一个文件）。
+- **调用方逐个改 async**：`world.loadLocalCatalog()` 与 `contract.mjs` 里两处读取都加了 `await`
+  （涉及 6 条既有断言，语义不变）。
+- **选择规则只剩一套**：`pickCacheEntry()` 与 `readLocalCatalog()` 共用 `classifyCacheDoc()`
+  （原因分 `parse` / `shape`）与「优先带促销」的 `preferPromo()`，两份实现不会再各自漂移。
+- **半写重试**：只对 `reason === 'parse'`（JSON 还没写完）的文件安排一次延后重读——复用
+  `scheduleLocalCatalog()` 已有的 3 秒延迟与去重，不新建定时器；同一文件（path+mtime+size）
+  最多 3 次，日志每个指纹只打一次。`shape`（结构不合法、超 8 MB）、`io`（权限 / 超时 / 读不到）
+  与质量闸门拒绝一律不重试。一个候选都不合法时 `readLocalCatalog()` 返回 `models` 为空的壳
+  （带 `skipped`），让 world 层看得见「唯一那份正在被写」。
+
+### 周期复查（塞进已有的 6 秒轮询）
+
+- 每轮先复查缓存目录、再 `syncProc()`，主体抽成 `await world._tick()`，带 `_tickBusy` 防叠加。
+  触发条件只有两条：`mainPid` 变化（`via === 'error'` 或 `mainPid` 为空时不触发）、
+  `stat(cacheDir).mtimeMs` 变化；另加每 30 轮（约 3 分钟）无条件兜底扫一次。
+- 去重基准是独立的 `_watchSeen`，**与 `catalogAt` 解耦**：`catalogAt` 会被「从服务器刷新」顶成
+  `Date.now()`，拿它当判据等于把复查关掉。采纳本地缓存时 `catalogAt = Math.min(mtime, Date.now())`，
+  缓存带未来时间戳也顶不死「谁新用谁」。
+- **健壮性**：`_catalogBusy` 单飞（四条触发路径不会交错写盘）、`_stopped` 闸（每个 `await` 后复查，
+  停用后在途的读不落盘）、`start()` 复位 / `stop()` 清理全部运行期状态、目录写盘改成
+  临时文件 + `rename` 的原子写并用 promise 链串行排队。
+
+### 契约与文档
+
+- `contract.mjs` +20 条（169 → 189）：静态断言（`localcatalog.js` 不再有 `readFileSync`、
+  从 `node:fs/promises` 取 `readFile`、`readLocalCatalog()` 返回 Promise）、M5 最小复现
+  （`mainPid` 与 `running` 都不变，靠目录 mtime 发现新缓存并采纳、促销保留）、`catalogAt` 在未来
+  时复查仍生效、选择规则只一套、S4 四个交叉场景、`stop()` 后在途读不采纳也不落盘。
+- `SECURITY.md` 写明运行期每 6 秒只 `stat` 一次缓存目录、文件读取异步且整次扫描 5 秒上限；
+  `config.js` 的 `localCatalog` 描述补周期复查。
+- 版本号 0.3.9。
+
+## 0.3.8
+
+修 0.3.7 审查报告确认的 H1/H2/H3 与 M2/M3/M6（**本地交付；未推送、未发布，安装待确认**）。
+
+### 安全与正确性
+
+- **H1 legacy 降级保护**：`refreshCatalog()` 的降级保护原来只认 `catalogSource === 'v3-config'`，
+  而 0.3.7 之后最常见的完整目录来源是 `local-cache`——手动刷新撞上 legacy 时会把本机缓存目录与促销一起清掉。
+  改为按「是否已有一份完整目录」判断（新增 `hasCompleteCatalog()`：models 非空且 promos 非空，
+  或来源属于 `v3-config` / `local-cache`），不再按来源字符串硬编码。
+- **H2 质量闸门**：无促销的 CLI 子集缓存（哪怕 mtime 更新）不再覆盖已带促销的完整目录；
+  跳过时记一条 warn，说明保留了几条促销、几个模型。
+- **H3 启动不再查余额**：删掉 `start()` 里的 `if (this.tokens) void this.syncBalance()`。余额只在用户点
+  「刷新余额 / 查询积分」（`usage/refresh`、`account/credits`、`wb_credits`）时才取。
+- **M2 启动无条件读缓存**：不再以 `proc.running` 为前提，主进程闸门只保留在「从服务器刷新」那条路上；
+  首次安装且 WorkBuddy 没开着时，面板也有目录可看、可点选。
+- **M3 读缓存不清 `lastError`**：认证错误、目录错误不会被一次缓存读取擦掉。
+- **M6 逐个读缓存**：`readLocalCatalog()` 改为按 mtime 倒序逐个读、带促销命中即返回，单文件超过 8 MB 跳过；
+  `pickCacheEntry()` 保留为纯函数，解析逻辑抽成 `parseCacheDoc()`。不再每次把目录下所有 JSON
+  （实测 15 份、约 6 MB、33 ms 同步阻塞）全量 `JSON.parse`。
+
+### 契约与文档
+
+- `contract.mjs` +22 条（147 → 169）：H1（local-cache 完整目录 + legacy）、H2（无促销缓存配未来 mtime）、
+  M3（写过 `lastError` 哨兵后读缓存仍在）、H3（`start()` 的 `syncBalance` 调用数为 0）、
+  M2（主进程没跑时也排读缓存任务），以及配置组每个键都必须在 `WB_DEFAULTS` 里有默认值的遍历断言。
+- 口径收窄：README / CHANGELOG / SECURITY 里「扩展自己不再主动连服务器」一类表述，改为
+  「模型目录不再自动向服务器拉取，只有手动点「从服务器刷新」才请求」——chat、积分、签到本来就要联网。
+- README 配置表补 `localCatalog` / `localCatalogDelayMs`；esbuild 版本改为实际的 0.28.2；
+  `--runs` 统一为 3（与 `npm run verify` 一致）。
+- 0.3.7 的安装状态改成事实：已装进 Coopanion，`core.log` 里 23:41:44 与 23:43:22 两次「目录取自本机缓存」命中。
+- 版本号 0.3.8。
+
+## 0.3.7
+
+模型目录改成「本机缓存优先」：模型目录不再自动向服务器拉取，只有用户在面板上手动点「从服务器刷新」
+才走网络，且要求 WorkBuddy 主进程在跑。已装进 Coopanion（`core.log` 里 23:41:44 与 23:43:22 两次
+「目录取自本机缓存」命中）；本次修复只在本地，未推送、未发布。
+
+### 模型目录
+
+- **新增 `src/localcatalog.js`**：读 WorkBuddy 桌面端启动时落盘的
+  `~/.workbuddy/cache/acc-product-config-v3-<pid>-<uuid>.json`（根目录可用 `WORKBUDDY_CONFIG_DIR` 改）。
+  按 mtime 倒序扫候选、跳过 `-tpl-` 模板与坏 JSON、`models` 为空或模型缺 `id` 的也跳过；
+  **优先取 `modelPromotions` 非空的那份**（GUI 主通道，62 个模型带促销），只有在全都没有促销时才接受
+  CLI 通道子集（58 个模型、0 条促销）。选文件规则抽成纯函数 `pickCacheEntry()`，与读盘分开，可单测。
+  模型与促销复用 `upstream.js` 的 `normalizeModel()`（本版改为 export）与 `promo.js` 的 `parsePromos()`。
+- **启动不再自动刷新**：删掉 `world.js` 里「有凭据且目录为空就 `refreshCatalog()`」那段。启动只读磁盘上
+  的 `workbuddy-catalog.json` 与 WorkBuddy 本地缓存。
+- **检测到主进程后延后读缓存**：启动时 `syncProc(true)` 若已在跑，排一次延迟任务（默认 3000ms，
+  配置项 `worlds.workbuddy.localCatalogDelayMs`，夹在 1000–15000）；启动时没在跑就先不读，
+  等 6 秒轮询出现「没跑 → 在跑」翻转再排一次，**同一次翻转只排一次**（`_localTimer` 去重）。
+- **谁新用谁**：本地缓存文件 mtime 比当前 `catalogAt` 新才替换目录，并记 `catalogSource = 'local-cache'`、
+  `catalogAt = mtime`；磁盘那份更新就保持原样。两种情况都 `saveCatalog()` 统一落盘。
+  `saveCatalog()` 的 `at` 由「写当时时间」改为「写 `this.catalogAt`」，否则每次重启都会把本地缓存判旧。
+- **手动刷新加闸门**：`refreshCatalog()` 开头 `syncProc(true)`，主进程没在跑直接抛
+  「WorkBuddy 主进程没在跑，无法从服务器刷新模型列表。」
+- **`models/state` 新增结构化字段** `catalogSource: { kind: 'local-cache'|'v3-config'|'legacy'|'', at, path?, label }`，
+  label 形如「本地缓存 · 11-04 21:12」/「服务器 · 11-04 20:30」。`catalogAt` 保留。
+- 不做 TTL 过期判定（没有 `maxAgeHours`）：只有「谁新用谁 + 标注更新时间」。
+
+### 配置与面板
+
+- 新增两个旋钮：`worlds.workbuddy.localCatalog`（默认 `true`）与
+  `worlds.workbuddy.localCatalogDelayMs`（默认 `3000`，1000–15000）。
+- 模型面板顶部显示「更新时间」（即 `catalogSource.label`，鼠标悬停显示缓存路径）；
+  刷新按钮文案改为「从服务器刷新」（英文 `Refresh from server`），`state.running === false` 时禁用并说明原因；
+  挂载时仍然只 `invoke('state')`，不自动刷新。
+
+### 契约与文档
+
+- `contract.mjs` 新增「本地目录缓存」一节（+23 条断言，总数 124 → 147）：带促销那份优先于更新的 CLI 子集、
+  坏 JSON / 空 models / 缺 id / `-tpl-` 跳过、无缓存返回 null、只有无促销缓存也接受；
+  真文件系统验证 mtime 与 `normalizeModel` 字段；本地比磁盘新 → 用本地且 `catalogSource === 'local-cache'`、
+  `catalogAt === 文件 mtime`、落盘 `at` 一致；磁盘更新 → 保持 `v3-config`；主进程没跑时 `refreshCatalog()` 抛错、
+  不排定时器、`stop()` 清理。原 legacy 保护测试补了 `syncProc` 桩以适配刷新闸门。
+- README 新增「模型目录：本机缓存优先（0.3.7 起）」一节并更新面板表格；CHANGELOG / TEST-REPORT 同步；版本号 0.3.7。
+
 ## 0.3.6
 
 跟进 WorkBuddy 上游的 HY4 改版：官方目录里 `hy4-preview` 已消失，换成了两个显示名都叫「Hy4」的新 id，
-本版把安全清单与这两项对齐（白名单 17 → 18，`hy4-preview` 置灰）。
-已推送到 GitHub `main`（提交 `9fd1e1e`）；未打 tag、未 `npm publish`，安装到 Coopanion 待确认。
+本版把安全清单与这两项对齐（**仅本地，未推送、未发布；安装到 Coopanion 待确认**）。
 
 ### 安全清单与目录
 
